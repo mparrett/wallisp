@@ -1,10 +1,28 @@
 ---
-status: open
-assigned: unassigned
+status: done
+assigned: claude-code
 created: 2026-05-29
 updated: 2026-05-29
+shipped: 2026-05-29
+shipped_in: engines/lisp_region.c, FINDINGS.md "H2 zero floor — region-drop GC"
 ---
 # Feature: region-drop GC engine (`lisp_region.c`) + structural cleanup ideas
+
+## Outcome (2026-05-29)
+
+Shipped. Pre-registered prediction (a) — `lisp_region/lisp` ≈ 1.0× — was
+REFUTED in the "interesting" direction: wasm tax landed at ~0.94×,
+native at ~0.99×. Region-drop is faster than the no-GC tree-walker
+baseline on wasm. The H2 mechanism story is sharpened: the no-GC
+baseline itself was paying a small cons-shape tax we hadn't isolated.
+Predictions (b) and (c) confirmed: lisp_region eliminates the mark-sweep
+tax entirely (0.66–0.83× of lisp_gc time), and clang's -O2 TRE is
+preserved (countdown(1M) returns `done` in the 16M-cell big variant).
+
+See FINDINGS.md "H2 zero floor — region-drop GC" for the full writeup
+and falsification log.
+
+---
 
 ## Summary
 

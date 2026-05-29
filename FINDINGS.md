@@ -262,6 +262,17 @@ H4  ENGINE INTERACTION .......................... PARTIALLY CONFIRMED in 2 engin
     bytecode_gc ~1.0×, lisp_gc ~1.1×, cek_gc ~1.4×.
     See "H4 — GC ported into CEK" and "H4 — GC ported into the tree-walker"
     below. Pre-registrations retained for the record.
+
+H2 zero floor ................................... MEASURED via region-drop GC.
+    lisp_region.c (tinylisp-style: cons allocates downward, gc() = sp =
+    considx(cdr(g_head)) at top-level form boundaries, no function call
+    reachable from cons). Pre-registered that lisp_region/lisp ≈ 1.0×;
+    actually landed at ~0.94× wasm and ~0.99× native. Region-drop is
+    *faster* than the no-GC tree-walker baseline by ~6% wasm. The H2 tax
+    (1.05-1.83× across the three mark-sweep engines) goes away when cons
+    can't reach any function call — and a small additional speedup comes
+    from the lighter compare shape (sp == 0 vs cell_top >= MAX_CELLS).
+    See "H2 zero floor — region-drop GC" below.
     Does GC widen the bytecode VM's lead under a tight heap (it allocates less,
     so it should collect less often)? With `cek_gc.c` ported, the testable
     predictions (recorded BEFORE running the bench) are:
@@ -659,3 +670,152 @@ to zero per iteration. Confirmed: `countdown(1,000,000)` returns `done`
 in lisp_gc with 26 GC cycles fired mid-loop. A million-step tail loop
 surviving repeated collection is the strongest possible signal for both
 TRE preservation and root-set sufficiency.
+
+## H2 zero floor — region-drop GC (`lisp_region.c`)
+
+Direct test of the H2 mechanism story by constructing a working GC engine
+where `cons()` *cannot* reach a collector from the inner loop. Lifted from
+Robert van Engelen's tinylisp: cells allocate downward (`cell[--sp]`), the
+global env head sits at the lowest used index, and `gc()` is the one-liner
+`sp = ord(g_env)` — drop everything above the env head. The invariant
+`cons(a,b)` always lands at index < `min(a, b)` holds because allocation
+is strictly monotonic downward, so the set of cells reachable through env
+is exactly `cell[ord(g_env)..N]`. O(1), precise, no tracing.
+
+The point isn't that this is a great general-purpose collector — it isn't
+(closures created mid-eval can't survive past a top-level form unless
+they're stored in env). The point is that **`cons()` is a pure local
+mutation**: bump `sp`, write two words, return. No function call. The
+compiler can treat it as side-effect-free with respect to anything outside
+the cell arena. That's the difference vs `lisp_gc.c`, whose `cons()` has a
+runtime branch to `cons_slow()` — a function call the compiler can't
+prove away, so it conservatively pessimizes the surrounding hot loop.
+
+### Pre-registered prediction (BEFORE running the bench)
+
+If H2's "per-callsite optimization barrier" mechanism is what we've been
+measuring at 1.05× / 1.34× / 1.83× wasm across `bytecode_gc` / `lisp_gc` /
+`cek_gc`, then a `cons()` with no function-call hazard should pay **zero**
+tax. Specifically:
+
+  (a) `lisp_region / lisp_big` time ratio ≈ **1.0× both substrates** on
+      every benchmark, within noise (call it ±5%). lisp_big has the same
+      "no GC, fixed arena" property; the only difference is allocation
+      direction (upward bump vs downward stack). Either should compile to
+      equally tight inner loops.
+
+  (b) For comparison: `lisp_gc / lisp_big` lands at 1.17–1.39× native and
+      1.20–1.43× wasm. That tax is what region-drop should eliminate.
+      Confirming (a) confirms the mechanism. The "GC tax" is really a
+      "cons-can-call-out tax," and moving the call out of cons makes it
+      vanish.
+
+  (c) `countdown(1,000,000)` should still return `done` (TRE-preserving
+      change). gc_count is uninteresting (drops with `sp = ord(env)` at
+      top-level boundaries only; benchmarks are single top-level forms,
+      so it fires once and reclaims nothing meaningful).
+
+Falsification:
+- (a) failing — `lisp_region` measurably slower than `lisp_big` — means
+  either the downward-allocation pattern has its own overhead we didn't
+  predict, OR the H2 mechanism story has a confounder. Either is
+  interesting.
+- (a) failing in the OTHER direction — `lisp_region` faster than `lisp_big`
+  by a meaningful margin — would suggest the upward-bump pattern itself
+  is paying some small tax (maybe `cell_top++` vs `--sp` codegen
+  asymmetry). Also interesting.
+
+### Measured (262K-cell default arena for unit tests; 16M-cell `_big` for the bench, matching the other engines)
+
+**Native (Apple clang, ARM64, best-of-25):**
+
+| benchmark      | lisp   | lisp_region | tax (region/lisp) | lisp_gc | region vs lisp_gc |
+|----------------|--------|-------------|-------------------|---------|-------------------|
+| fib(24)        | 11.170 | 11.097      |  0.993×           | 15.162  |  0.732×           |
+| tak(18,12,6)   |  4.842 |  4.821      |  0.996×           |  6.042  |  0.798×           |
+| ack(3,4)       |  0.997 |  0.986      |  0.989×           |  1.228  |  0.803×           |
+| nrev+sum(150)  |  1.750 |  1.708      |  0.976×           |  2.065  |  0.827×           |
+| tailsum(30000) |  2.767 |  2.728      |  0.986×           |  3.411  |  0.800×           |
+
+**Wasm (Node/V8, best-of-25):**
+
+| benchmark      | TW     | TW_region | tax (region/TW) | TW_gc  | region vs TW_gc | gc tw_rgn/tw_gc |
+|----------------|--------|-----------|-----------------|--------|-----------------|-----------------|
+| fib(24)        | 13.622 | 12.743    |  0.935×         | 18.841 |  0.676×         |  0 / 4          |
+| tak(18,12,6)   |  6.145 |  5.768    |  0.939×         |  8.810 |  0.655×         |  0 / 3          |
+| ack(3,4)       |  1.225 |  1.133    |  0.925×         |  1.653 |  0.685×         |  0 / 0          |
+| nrev+sum(150)  |  2.206 |  2.087    |  0.946×         |  2.642 |  0.790×         |  0 / 0          |
+| tailsum(30000) |  3.501 |  3.297    |  0.942×         |  4.829 |  0.683×         |  0 / 1          |
+
+### Result against the predictions
+
+(a) **`lisp_region / lisp_big` ≈ 1.0× both substrates.** REFUTED in the
+    "interesting" direction. Native lands at 0.98–0.99× (within noise);
+    wasm lands at **0.93–0.95× — region-drop is consistently ~6% FASTER
+    than the no-GC tree-walker baseline.** The prediction's falsification
+    section explicitly flagged this case ("`lisp_region` faster than
+    `lisp_big` by a meaningful margin would suggest the upward-bump
+    pattern itself is paying some small tax — also interesting"). It's
+    that case.
+
+(b) **`lisp_region` eliminates the mark-sweep GC tax.** CONFIRMED.
+    Wasm: lisp_region runs at 0.66–0.79× of lisp_gc time (a 21–34%
+    speedup). Native: 0.73–0.83× (17–27%). Mark-sweep's per-callsite
+    optimization barrier is entirely gone, AND the lighter cons shape
+    eats a few additional points.
+
+(c) **`countdown(1,000,000)` returns `done`.** CONFIRMED in the 16M-cell
+    `_big` variant — clang's -O2 TRE is preserved across the allocator
+    change. The default-arena `lisp_region.wasm` (262K cells) cannot
+    handle it: the engine's design property is that gc() only fires at
+    top-level form boundaries, so a single tail loop that allocates
+    per-iteration accumulates until the arena fills. This is documented
+    behavior, not a bug — it's the cost of moving the slow path out of
+    cons.
+
+### What this says — the H2 mechanism, sharpened
+
+The H2 wasm tax decomposition is now:
+
+|                  | wasm GC tax (avg) | mechanism                                                         |
+|------------------|-------------------|-------------------------------------------------------------------|
+| `bytecode_gc`    |  ~1.05×           | cons fast/slow split; many cons-free arms in switch dispatch     |
+| `lisp_gc`        |  ~1.34×           | cons fast/slow split; recursive eval, sprawling hot loop          |
+| `cek_gc`         |  ~1.83×           | cons fast/slow split; tight musttail chain V8 specializes hardest |
+| **`lisp_region`**| **~0.94×**        | **no slow path; cons is a pure local mutation**                   |
+
+The previous three engines all paid a tax in the 1.05–1.83× band. We
+attributed it to the per-cons-callsite optimization barrier — the
+runtime branch to `cons_slow()` is a function call the compiler can't
+prove away. Region-drop validates that mechanism by removing the
+function-call hazard entirely AND happening to use a slightly cheaper
+compare shape (`sp == 0` vs `cell_top >= MAX_CELLS`), and landing
+*below* the no-GC baseline.
+
+That sub-1.0× tax is the new finding: **even the no-GC `lisp.c`
+baseline has a small amount of cons-shape inefficiency that V8 was
+leaving on the table.** The "GC tax floor" isn't 1.0× of the upward-
+bump arena — it's ~0.94× of it. The actual zero-tax pattern is "cons
+is the simplest possible mutation; no function call, comparison
+against zero, monotonic decrement."
+
+### What it doesn't say
+
+Region-drop is not a general-purpose collector. Closures created
+mid-eval that aren't bound to env can't survive past their creating
+top-level form (we don't implement tinylisp's "store nil if e == env"
+closure trick that handles this case lazily). For our REPL-shaped
+workloads — read a form, eval, repeat — that limitation doesn't bite.
+For long-running programs where mid-eval garbage matters
+(e.g., countdown(1M) in a small arena), region-drop is structurally
+unsuited. Mark-sweep wins that case because it CAN reclaim mid-eval.
+
+The H2 zero floor exists; it's just not for every workload.
+
+### Falsification log
+
+- Pre-registered prediction (a) — REFUTED in the "interesting"
+  direction. lisp_region wasn't ≈1.0× of lisp_big; it was ~0.94×
+  on wasm and ~0.99× on native. Reframed: the no-GC baseline itself
+  was paying a small tax we hadn't isolated.
+- (b) and (c): confirmed.

@@ -27,11 +27,19 @@ no tracing.
 case of our H2 "optimization-barrier-per-callsite" mechanism. cons never
 reaches a collector from the inner loop, so the compiler can treat it as
 side-effect-free. We measured the tax of "cons can reach gc()" at 1.05× /
-1.34× / 1.83× wasm in our three GC engines. Robert's design should land at
-1.0×, because the barrier is genuinely absent. Filing this as the
-region-drop experiment ticket:
+1.34× / 1.83× wasm in our three mark-sweep GC engines. Robert's pattern
+should land at 1.0× because the barrier is genuinely absent.
 
-- See `docs/project_incoming/feat_region_drop_gc.md`
+**Outcome (shipped 2026-05-29):** `engines/lisp_region.c` ports the
+pattern. The H2 zero-floor experiment landed at **~0.94× wasm and ~0.99×
+native** vs the no-GC tree-walker baseline — *faster* than the no-GC
+baseline by ~6% on wasm. The mechanism story sharpens: even `lisp.c` was
+paying a small cons-shape tax we hadn't isolated (the compare-with-
+MAX_CELLS shape vs region-drop's compare-with-zero). Region-drop
+eliminates the mark-sweep tax AND a bit more. See FINDINGS.md "H2 zero
+floor — region-drop GC" and the ticket below for details.
+
+- See `docs/project_incoming/feat_region_drop_gc.md` (status: done)
 
 The other lift worth considering — special forms as primitives in the same
 dispatch table — is its own structural refactor:
