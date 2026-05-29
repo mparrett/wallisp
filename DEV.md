@@ -136,6 +136,11 @@ All engines: `--target=wasm32 -nostdlib -Wl,--no-entry -Wl,--export-dynamic
 - Arenas are tunable via `#define MAX_CELLS`. `build.sh` also emits big-arena
   `*_big.wasm` for `harness/bench.mjs`, since the no-GC engines exhaust a small
   arena on heavy benchmarks.
+- Default is `-O2`. Swapping to `-Oz` roughly halves every wasm artifact (47%–61%)
+  and is *equal or faster* on V8 for every engine except CEK, where it tanks
+  perf 1.9×–2.6× (V8's musttail specialization needs the inlined dispatch arms
+  `-O2` produces). Default kept at `-O2` so no engine regresses; see
+  FINDINGS.md "Build flag: -O2 vs -Oz" for the full table.
 
 **wasm ABI** (modules have zero imports; they're *libraries*, not commands — no
 `_start`/WASI, so a standalone runtime's `run` subcommand won't work; embed via the

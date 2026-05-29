@@ -255,6 +255,63 @@ interpreter side of a fixed substrate. The remaining ~55× to native C lives
 in compiler/JIT territory we don't control. Worth knowing where the headroom
 actually sits.
 
+## Build flag: `-O2` vs `-Oz` — half the wasm size, free or better on V8 (except CEK)
+
+`-Oz` appears once in the falsification log above — as "the thing that ate
+the switch-dispatch speedup." We never quantified the *size* win, and the
+project's reflex has been to default to `-O2` everywhere (in `build.sh`).
+Worth re-measuring properly.
+
+Same eight engines, built twice (`-O2` and `-Oz`), Homebrew clang 22, wasm32,
+identical link flags. Sizes are default-arena (shipped) builds; perf is fib(24)
+on the big-arena variants the bench harness uses, best-of-25 in Node/V8:
+
+| engine          | O2 bytes | Oz bytes | size Δ  | O2 fib ms | Oz fib ms | perf Δ   |
+|-----------------|---------:|---------:|--------:|----------:|----------:|---------:|
+| lisp            |    9840  |    4348  | −55.8%  |   14.51   |   12.53   |  −13.7%  |
+| lisp_trampoline |    9838  |    4359  | −55.7%  |   13.92   |   12.44   |  −10.7%  |
+| lisp_gc         |   10435  |    5484  | −47.4%  |   18.82   |   17.54   |   −6.8%  |
+| lisp_region     |    9965  |    4453  | −55.3%  |   12.73   |   12.19   |   −4.2%  |
+| cek             |   12964  |    5067  | −60.9%  |   27.04   |   71.03   | **+162.8%** |
+| cek_gc          |   12050  |    6014  | −50.1%  |   50.67   |   95.57   |  **+88.6%** |
+| bytecode        |   15434  |    6178  | −60.0%  |    7.24   |    7.91   |   +9.2%  |
+| bytecode_gc     |   15748  |    7441  | −52.7%  |    7.31   |    6.50   |  **−11.1%** |
+
+Three findings:
+
+**1. `-Oz` consistently halves the wasm artifact** — every engine shrinks
+47%–61%, with average ~55%. The total shipped wasm goes from 96.3 KB to
+43.4 KB. The savings come from less inlining and more sharing of common
+sequences; `-Oz` aggressively prefers code-size over hot-path inlining.
+
+**2. For most engines, V8 prefers the smaller code.** The tree-walker
+family and (most interestingly) `bytecode_gc` — the finalist — run *faster*
+at `-Oz`. The mechanism is straightforward: smaller modules are friendlier
+to V8's tiered JIT (less code to baseline-compile, smaller hot paths to
+specialize, better instruction-cache behavior). `bytecode_gc` lands at
+−11% time and −53% bytes simultaneously. Strict win.
+
+**3. CEK regresses catastrophically.** `cek` at `-Oz` is **2.6× slower**;
+`cek_gc` is **1.9× slower**. Consistent with the "Native build" section
+above: CEK's tight musttail dispatch chain is the shape V8 specializes
+hardest, and `-Oz` emits a coarser code shape (fewer inlined arm
+specializations) that V8's tier-up pattern-matchers don't recognize as the
+hot musttail loop. The thing that makes CEK fast on V8 is exactly what
+`-Oz` declines to spend code-size on.
+
+**Practical takeaway.** For shipped engines (`bytecode_gc`, tree-walker
+variants), `-Oz` is strictly better — smaller and same-or-faster. For
+CEK, `-O2` is non-negotiable. `build.sh` keeps `-O2` as the universal
+default because a single flag that doesn't make any engine *worse* is the
+safe shared setting; an opinionated build script would use `-Oz` for
+everything except `cek*` and ship at roughly half the byte count.
+
+The deeper methodological point: clang's `-O2`/`-Oz` choice interacts with
+V8's JIT in a way that isn't predictable from either layer alone. `-Oz` is
+"smaller and slower" on most native targets; on V8 it's "smaller and
+usually equal or faster, but CEK 2× slower." Four substrates, four places
+for the answer to flip.
+
 ================================================================================
 MARK-SWEEP GC  (bytecode_gc.c)  — removing the shared ceiling
 ================================================================================

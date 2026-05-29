@@ -717,6 +717,41 @@ static void gc(void) {
 
 <p>The engine work in this project moves us from 57 ms to 7.3 ms &mdash; about 8&times;, on the interpreter side of a fixed substrate. From 7.3 ms to 0.13 ms is the remaining ~55&times;, and it lives in compiler/JIT territory we don't control. The headroom is real, and it's worth knowing where it actually sits.</p>
 
+<h2><span class="section-num">8</span>A note on <code>-Oz</code></h2>
+
+<p>The whole project is built with <code>clang -O2</code>. <code>-Oz</code> appears once in the falsifications above &mdash; "the thing that ate the switch-dispatch speedup." We never quantified its <em>size</em> effect, which turns out to be the more interesting story.</p>
+
+<p>Rebuilt every engine at both flags, same toolchain, same link settings:</p>
+
+<figure>
+  <table>
+    <thead>
+      <tr><th>engine</th><th class="num">-O2 bytes</th><th class="num">-Oz bytes</th><th class="num">size Δ</th><th class="num">fib(24) -O2</th><th class="num">fib(24) -Oz</th><th class="num">perf Δ</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="engine">lisp</td><td class="num">9,840</td><td class="num">4,348</td><td class="num">−55.8%</td><td class="num">14.5 ms</td><td class="num">12.5 ms</td><td class="num">−13.7%</td></tr>
+      <tr><td class="engine">lisp_trampoline</td><td class="num">9,838</td><td class="num">4,359</td><td class="num">−55.7%</td><td class="num">13.9 ms</td><td class="num">12.4 ms</td><td class="num">−10.7%</td></tr>
+      <tr><td class="engine">lisp_gc</td><td class="num">10,435</td><td class="num">5,484</td><td class="num">−47.4%</td><td class="num">18.8 ms</td><td class="num">17.5 ms</td><td class="num">−6.8%</td></tr>
+      <tr><td class="engine">lisp_region</td><td class="num">9,965</td><td class="num">4,453</td><td class="num">−55.3%</td><td class="num">12.7 ms</td><td class="num">12.2 ms</td><td class="num">−4.2%</td></tr>
+      <tr><td class="engine">cek</td><td class="num">12,964</td><td class="num">5,067</td><td class="num">−60.9%</td><td class="num">27.0 ms</td><td class="num">71.0 ms</td><td class="num">+162.8%</td></tr>
+      <tr><td class="engine">cek_gc</td><td class="num">12,050</td><td class="num">6,014</td><td class="num">−50.1%</td><td class="num">50.7 ms</td><td class="num">95.6 ms</td><td class="num">+88.6%</td></tr>
+      <tr><td class="engine">bytecode</td><td class="num">15,434</td><td class="num">6,178</td><td class="num">−60.0%</td><td class="num">7.2 ms</td><td class="num">7.9 ms</td><td class="num">+9.2%</td></tr>
+      <tr><td class="engine">bytecode_gc</td><td class="num">15,748</td><td class="num">7,441</td><td class="num">−52.7%</td><td class="num">7.3 ms</td><td class="num">6.5 ms</td><td class="num">−11.1%</td></tr>
+    </tbody>
+  </table>
+  <figcaption>Same engines, same hardware, both opt levels. Sizes are default-arena (shipped) builds; perf is fib(24) best-of-25 on big-arena variants. Total shipped wasm: 96.3 KB &rarr; 43.4 KB at <code>-Oz</code>.</figcaption>
+</figure>
+
+<p>Three things to notice.</p>
+
+<p><strong><code>-Oz</code> halves every artifact.</strong> 47&ndash;61% smaller, average 55%. <code>-Oz</code> aggressively prefers code-size over hot-path inlining; the wasm modules lose duplicated sequences and become friendlier to V8's tiered JIT (less code to baseline-compile, smaller hot paths to specialize, better instruction-cache behavior).</p>
+
+<p><strong>On most engines, V8 prefers the smaller code.</strong> The tree-walker family and &mdash; importantly &mdash; <code>bytecode_gc</code> (the finalist) run <em>faster</em> at <code>-Oz</code>. <code>bytecode_gc</code> lands at &minus;11% time and &minus;53% bytes simultaneously. Strict win.</p>
+
+<p><strong>CEK regresses catastrophically.</strong> <code>cek</code> is 2.6&times; slower at <code>-Oz</code>; <code>cek_gc</code> is 1.9&times; slower. The mechanism is consistent with the prior native-vs-wasm finding: CEK's tight musttail chain is the shape V8 specializes hardest, and <code>-Oz</code> emits a coarser code shape (fewer inlined dispatch arms) that V8's tier-up pattern-matchers don't recognize as the hot musttail loop. What makes CEK fast on V8 is exactly what <code>-Oz</code> declines to spend code-size on.</p>
+
+<p>So why does <code>build.sh</code> still default to <code>-O2</code>? Because a single flag that doesn't make <em>any</em> engine worse is the safe shared setting for a comparison study. An opinionated build script would use <code>-Oz</code> for everything except <code>cek*</code> and ship the finalist at roughly half the byte count. The deeper point: clang's <code>-O2</code>/<code>-Oz</code> choice interacts with V8 in a way that isn't predictable from either layer alone &mdash; <code>-Oz</code> is "smaller and slower" on most native targets, and on V8 it's "smaller and usually equal or faster, but CEK 2&times; slower." Four substrates, four places for the answer to flip.</p>
+
 <h2>Closing &mdash; eight engines, four hypotheses, three falsifications</h2>
 
 <p>The full project ran four pre-registered hypothesis arcs:</p>
