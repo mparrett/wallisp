@@ -1,5 +1,27 @@
-# Wa-Lisp
+# wallisp — tiny Lisp → WebAssembly
 
-A place for a Claude experiment.
+A small Lisp implemented three ways (tree-walker, CEK machine, bytecode VM),
+compiled to freestanding `wasm32` with **zero imports**, then driven by
+measurement to a finalist: a bytecode VM with TCO and a hand-rolled mark-sweep GC.
 
-Tiny lisp in c -> WASM
+## Quick start
+
+```bash
+bash build.sh                            # builds engines -> *.wasm (needs clang+wasm-ld and node)
+node harness/test_bc.mjs                 # bytecode correctness suite
+node harness/lisp-cli.mjs -e "(begin (define fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))) (fib 20))"
+# open web/tiny-lisp-vm.html in a browser — self-contained live REPL + writeup
+```
+
+Prebuilt `*.wasm` modules are checked in at the repo root, so the harness and CLI
+work without running `build.sh` first.
+
+## Learn more
+
+- **[DEV.md](DEV.md)** — architectural tour: the language, the three engines, the
+  bytecode ISA, the GC, the optimization ladder, the hand-editable WAT track, and
+  open threads.
+- **[FINDINGS.md](FINDINGS.md)** — the empirical record: benchmark tables, the
+  five pre-registered GC hypotheses, and surprises that refuted armchair guesses.
+- **[CLAUDE.md](CLAUDE.md)** — instructions for Claude Code agents working in
+  this repo.
