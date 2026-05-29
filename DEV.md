@@ -186,17 +186,19 @@ real Deno port would need `performance.now()` in the bench path.
 ## File map
 
 ```
-build.sh                 build all engines -> *.wasm (root)
+build.sh                 build all engines -> *.wasm (pass --native for native bins)
 FINDINGS.md              full empirical record (engine benchmarks + GC hypotheses)
 *.wasm                   prebuilt engines (run immediately without clang)
-engines/                 the three architectures + GC finalist
+engines/                 the four architectures (see engines/README.md)
   lisp.c cek.c bytecode.c bytecode_gc.c
-prototype/               no-TCO/no-GC line + the optimization ladder
+prototype/               bytecode optimization ladder (see prototype/README.md)
   bc_orig.c bc_base.c bc_inline.c bc_super.c
 wat/                     hand-editable WAT experiments
   probe.wat bc_edit.c bc_edit.wat bc_instr.wat
-harness/                 node drivers
+harness/                 node drivers (also runs under Bun)
   test_bc.mjs bench.mjs lisp-cli.mjs
+native/                  native build (no wasm, no JIT) — see "Native build" above
+  bench.c main.c
 web/                     self-contained browser showcase
   tiny-lisp-vm.html build-standalone.sh
 docs/                    project memory (notes, incoming tickets, archived)
