@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 # Build every engine to wasm. Requires clang with the wasm32 target + wasm-ld.
 # Output .wasm land at the repo root (where the harnesses expect them).
+#
+# Pass --native to ALSO build native binaries (no wasm, no V8) for direct
+# engine-vs-engine measurement without the JIT/runtime layer. Native bench/CLI
+# use Apple/system clang and need no Homebrew toolchain.
 set -e
 cd "$(dirname "$0")"
+
+WANT_NATIVE=0
+[ "${1:-}" = "--native" ] && WANT_NATIVE=1
 
 # -fno-builtin on all engines: keeps modules zero-imports (the project's headline
 # property). Without it, newer clang (LLVM 20+) synthesizes calls to strlen for
@@ -33,4 +40,26 @@ mkbig engines/lisp.c     lisp_big.wasm
 mkbig engines/cek.c      cek_big.wasm      "-mtail-call"
 mkbig engines/bytecode.c bytecode_big.wasm
 echo "  -> lisp_big.wasm cek_big.wasm bytecode_big.wasm"
+
+if [ "$WANT_NATIVE" = "1" ]; then
+  echo "native binaries (no wasm, no JIT — direct C measurement):"
+  NFLAGS="-O2 -I. -Wno-unknown-attributes -Wno-ignored-attributes -Wno-macro-redefined"
+  # Bench uses a big-arena engine variant (matches the wasm *_big.wasm builds, so
+  # native vs wasm timings are apples-to-apples and no-GC engines don't bail on
+  # heavy benchmarks). CLI uses the default-arena engine for fast load + small
+  # one-off evals — same as the wasm CLI's bytecode_gc.wasm default.
+  mknat () { # engine_name engine_src
+    sed 's/define MAX_CELLS.*/define MAX_CELLS 16000000/' engines/$2.c > /tmp/_${1}_big.c
+    clang $NFLAGS -DENGINE_NAME='"'$1'"' -DENGINE_SRC='"/tmp/_'$1'_big.c"' \
+          -o native_bench_$1 native/bench.c
+    clang $NFLAGS -DENGINE_SRC='"engines/'$2'.c"' \
+          -o native_cli_$1 native/main.c
+  }
+  # -mtail-call is wasm-only; native musttail works on ARM64/x86 without it.
+  mknat lisp         lisp
+  mknat cek          cek
+  mknat bytecode     bytecode
+  mknat bytecode_gc  bytecode_gc
+  echo "  -> native_bench_{lisp,cek,bytecode,bytecode_gc} + native_cli_*"
+fi
 echo "done."

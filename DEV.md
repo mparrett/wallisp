@@ -139,6 +139,17 @@ output length, read the result string at `output_ptr()`. `bytecode_gc.wasm` also
 exports `gc_count()`; the `bc_base/inline/super` builds export `icount()`
 (instructions dispatched). `harness/lisp-cli.mjs` is a minimal driver.
 
+### Native build
+
+`bash build.sh --native` produces `native_bench_<engine>` and
+`native_cli_<engine>` binaries — same engine source, included as a single TU
+via `-DENGINE_SRC=...`, with the engine's own `memset`/`memcpy` macro-renamed
+so they don't collide with libc. Uses Apple/system clang, no Homebrew toolchain
+needed. The bench binaries answer "how much of the cost is the wasm/V8 layer
+vs the engine itself" — see FINDINGS.md "Native build" section. Headline:
+wasm-on-V8 costs only ~1.1x–1.6x over native, smaller than the engine-vs-engine
+gaps; GC overhead has a native floor (~1.3x) that V8 amplifies.
+
 ### JS runtimes
 
 Verified: **Node** (V8) and **Bun** (JavaScriptCore) — both run the harnesses

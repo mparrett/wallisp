@@ -148,6 +148,55 @@ correct semantics. Trivially reverted if raw throughput is the only goal.
   VM merely hits it later on `fib` by allocating less.
 - Numbers are V8-on-wasm. A standalone runtime (wasmtime, wasm3) would differ.
 
+## Native build — separating engine cost from substrate cost
+
+Same engines, compiled native (Apple clang, ARM64, `-O2`), same five benchmarks,
+in-process best-of-25 (see `native/bench.c`). Lets us separate "the engine
+design" from "the wasm-on-V8 substrate."
+
+| benchmark      | TW native | TW wasm | CEK native | CEK wasm | bc native | bc wasm | bc_gc native | bc_gc wasm |
+|----------------|-----------|---------|------------|----------|-----------|---------|--------------|------------|
+| fib(24)        | 10.98     | 13.61   | 24.47      | 27.20    | 5.32      | 7.25    | 7.05         | 10.03      |
+| tak(18,12,6)   | 4.92      | 6.13    | 10.55      | 12.23    | 2.38      | 3.19    | 2.77         | 4.44       |
+| ack(3,4)       | 1.00      | 1.23    | 2.11       | 2.34     | 0.39      | 0.55    | 0.52         | 0.73       |
+| nrev+sum(150)  | 1.75      | 2.20    | 3.11       | 3.45     | 0.45      | 0.68    | 0.59         | 0.84       |
+| tailsum(30000) | 2.77      | 3.50    | 6.06       | 6.79     | 1.10      | 1.54    | 1.41         | 2.20       |
+
+Three findings, each refines a prior claim:
+
+**1. wasm-on-V8 overhead is small — ~1.1x to 1.6x across all engines and
+benchmarks.** That's a strong empirical case FOR wasm as a deployment target:
+you give up at most 60% of speed for the portability/sandboxing/zero-imports
+property. The wasm bytecode VM at 7.25 ms on fib(24) is closer to its native
+self (5.32) than to either wasm-CEK or wasm-tree-walker.
+
+**2. The JIT *flattens* engine differences a bit — CEK has the smallest wasm
+overhead (~1.11x), bytecode has the largest (~1.4x).** Why: CEK's tight
+musttail loop is exactly the shape V8 specializes hardest (explicit state
+transitions become native jumps). Bytecode spends more time in interpreter
+dispatch machinery V8 has to JIT more conservatively. Consequence: **bytecode's
+lead over the tree-walker is *larger* native (2.0x–3.9x) than wasm (1.9x–3.3x).**
+V8 helps the simpler engine more.
+
+**3. GC overhead native (~1.32x on fib) is smaller than GC overhead wasm
+(~1.38x), but both are real.** This refines H2: the "optimization barrier" is
+genuinely a compiler-level phenomenon (clang itself can't treat `cons` as
+side-effect-free when it can reach `gc()`), but V8's JIT then amplifies it.
+The H2 wasm number (1.66x in the original measurement) isn't a pure measurement
+of the barrier — it's the barrier *amplified* by the JIT. Native lets us see
+the floor: ~1.3x is what you pay for GC-safe allocation points regardless of
+substrate. The story H2 told is confirmed; the number is now decomposed.
+
+Engine ordering is identical native vs wasm (`bytecode > tree-walker > CEK`,
+~2x gap each way). No surprises there.
+
+### Caveat on these measurements
+
+Different host machine from the original FINDINGS run (Apple Silicon, current
+LLVM, V8 in Node 25 / JSC in Bun 1.3) — absolute ms shouldn't be compared
+across reruns. The native/wasm *ratios* within this run are the load-bearing
+result, since both were measured back-to-back on the same hardware.
+
 ================================================================================
 MARK-SWEEP GC  (bytecode_gc.c)  — removing the shared ceiling
 ================================================================================
