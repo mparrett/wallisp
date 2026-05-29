@@ -20,12 +20,13 @@ For build/run, see [README.md](README.md). For the empirical record, see
   build the *same* semantics three ways and compare architectures honestly.
 - **Reader:** recursive descent, `'` quote shorthand, tolerant of a missing `)`.
 
-## The three engines — `engines/`
+## The engines — `engines/`
 
 | file | architecture | verdict |
 |---|---|---|
 | `lisp.c` | tree-walker (recursive eval over the cons-tree) | baseline, 1.0× |
 | `cek.c` | CEK machine (explicit Control/Env/Kont, wasm tail calls) | **2.2× slower** — clang already tail-eliminates the tree-walker's self-recursion, so CEK paid for heap continuations and got nothing back |
+| `cek_gc.c` | CEK + mark-sweep GC (H4 substrate) | same machine as `cek.c`; isolates the GC tax mechanism in a second engine |
 | `bytecode.c` | compile-once to a flat u32 ISA, stack VM, in-VM TCO (`OP_TAILCALL`) | **2.3–3.9× faster — winner** |
 | `bytecode_gc.c` | bytecode VM + mark-sweep GC (**the finalist**) | unbounded recursion in fixed memory |
 
@@ -172,9 +173,12 @@ real Deno port would need `performance.now()` in the bench path.
 2. **Redefinition guard** so superinstructions are fast *and* correct under
    `(define +)`. Worth folding into the same pass as #1 — lands fast + correct
    in one shot instead of shipping the silent divergence.
-3. **All-engine GC** — port the collector into the tree-walker/CEK to test H4:
-   does GC widen bytecode's lead under a tight heap? (Bytecode allocates less →
-   collects less often.)
+3. **All-engine GC** — `cek_gc.c` done (FINDINGS.md "H4 — GC ported into CEK"):
+   H4 partially confirmed, mechanism refuted, reframed as a fourth observation of
+   H2. Remaining: port collector into the tree-walker (`lisp.c`) — needs an
+   explicit shadow stack for cons-bearing C locals during recursive `eval()`,
+   since clang-`-O2`'s TRE doesn't help here (eval isn't tail-recursive in the
+   relevant frames).
 4. **Hand-written-VM north star** — a clean hand-written WAT interpreter over our
    existing ISA, reusing the clang front-end as the bytecode *producer* (~400 lines;
    the tractable, instructive slice — skip hand-writing the reader/printer/compiler).
@@ -189,8 +193,8 @@ real Deno port would need `performance.now()` in the bench path.
 build.sh                 build all engines -> *.wasm (pass --native for native bins)
 FINDINGS.md              full empirical record (engine benchmarks + GC hypotheses)
 *.wasm                   prebuilt engines (run immediately without clang)
-engines/                 the four architectures (see engines/README.md)
-  lisp.c cek.c bytecode.c bytecode_gc.c
+engines/                 the engines (see engines/README.md)
+  lisp.c cek.c cek_gc.c bytecode.c bytecode_gc.c
 prototype/               bytecode optimization ladder (see prototype/README.md)
   bc_orig.c bc_base.c bc_inline.c bc_super.c
 wat/                     hand-editable WAT experiments

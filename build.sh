@@ -21,9 +21,10 @@ MEM="-Wl,--initial-memory=33554432"      # 32 MB — fits the default 131072 / 2
 echo "engines (default arenas):"
 clang $FLAGS $MEM -O2              -o lisp.wasm         engines/lisp.c
 clang $FLAGS $MEM -O2 -mtail-call  -o cek.wasm          engines/cek.c          # CEK uses wasm tail calls
+clang $FLAGS $MEM -O2 -mtail-call  -o cek_gc.wasm       engines/cek_gc.c       # CEK + mark-sweep GC (H4)
 clang $FLAGS $MEM -O2              -o bytecode.wasm     engines/bytecode.c
 clang $FLAGS $MEM -O2              -o bytecode_gc.wasm  engines/bytecode_gc.c  # GC build ships its own memset
-echo "  -> lisp.wasm cek.wasm bytecode.wasm bytecode_gc.wasm"
+echo "  -> lisp.wasm cek.wasm cek_gc.wasm bytecode.wasm bytecode_gc.wasm"
 
 echo "prototype line (no TCO / no GC — the optimization ladder):"
 clang $FLAGS $MEM -O2 -o bc_base.wasm   prototype/bc_base.c     # + instruction counter
@@ -58,8 +59,9 @@ if [ "$WANT_NATIVE" = "1" ]; then
   # -mtail-call is wasm-only; native musttail works on ARM64/x86 without it.
   mknat lisp         lisp
   mknat cek          cek
+  mknat cek_gc       cek_gc
   mknat bytecode     bytecode
   mknat bytecode_gc  bytecode_gc
-  echo "  -> native_bench_{lisp,cek,bytecode,bytecode_gc} + native_cli_*"
+  echo "  -> native_bench_{lisp,cek,cek_gc,bytecode,bytecode_gc} + native_cli_*"
 fi
 echo "done."

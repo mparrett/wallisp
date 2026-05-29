@@ -16,6 +16,7 @@ import fs from 'fs';
 const ENGINES = [
   ['tree-walker', 'lisp_big.wasm',    false],
   ['CEK',         'cek_big.wasm',     false],
+  ['CEK_gc',      'cek_gc.wasm',      true],   // GC build — gc_count() exported
   ['bytecode',    'bytecode_big.wasm', false],
   ['bytecode_gc', 'bytecode_gc.wasm', true],   // GC build — gc_count() exported
 ];
@@ -89,9 +90,10 @@ const main = async () => {
   for (const [name, file, hasGc] of ENGINES) engines.push([name, hasGc, await load(file)]);
 
   const w = 14;
+  const bcIdx = engines.findIndex(([n]) => n === 'bytecode');
   let header = 'benchmark'.padEnd(18);
   for (const [name] of engines) header += name.padStart(w);
-  header += '       bc vs TW   gc cycles';
+  header += '       bc vs TW   gc (cek_gc / bc_gc)';
   console.log(header);
   console.log('-'.repeat(header.length));
 
@@ -103,11 +105,10 @@ const main = async () => {
 
     let line = name.padEnd(18);
     for (const r of runs) line += (r.ms.toFixed(3) + 'ms').padStart(w);
-    const tw = runs[0].ms, bc = runs[2].ms;
+    const tw = runs[0].ms, bc = runs[bcIdx].ms;
     line += ('       ' + (tw / bc).toFixed(2) + 'x').padStart(12);
-    const gcIdx = engines.findIndex(([, hasGc]) => hasGc);
-    const gcRun = gcIdx >= 0 ? runs[gcIdx] : null;
-    line += ('   ' + (gcRun ? gcRun.gc + ' cycles' : '')).padStart(14);
+    const gcRuns = engines.map(([, hasGc], i) => hasGc ? runs[i].gc : null).filter(g => g !== null);
+    line += ('   ' + gcRuns.join(' / ')).padStart(22);
     console.log(line + flag);
   }
 

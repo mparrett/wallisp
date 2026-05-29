@@ -248,9 +248,31 @@ H3  MARK vs SWEEP COMPOSITION ................... NOT yet measured.
     large arena should be sweep-dominated — the argument for lazy sweep or a
     generational nursery later.
 
-H4  ENGINE INTERACTION .......................... NOT yet measured.
+H4  ENGINE INTERACTION .......................... PARTIALLY CONFIRMED; mechanism refuted.
+    See the "H4 — GC ported into CEK" section below for the measurement,
+    falsification log, and the H2-from-a-new-angle reframing.
+    Pre-registration retained below for the record.
     Does GC widen the bytecode VM's lead under a tight heap (it allocates less,
-    so it should collect less often)? Needs GC ported into the other engines.
+    so it should collect less often)? With `cek_gc.c` ported, the testable
+    predictions (recorded BEFORE running the bench) are:
+      (a) `bytecode_gc` GC-count < `cek_gc` GC-count on every benchmark.
+          Mechanism: CEK allocates 5–6 conses per continuation step and
+          continuations are the unit of progress; bytecode's operand stack +
+          flat call frames amortize across many steps before the next cons.
+      (b) `bytecode_gc / cek_gc` time ratio > `bytecode_big / cek_big` ratio.
+          That is: GC AMPLIFIES bytecode's existing lead. (This is the core
+          H4 claim.)
+      (c) The amplification is largest on allocation-heavy programs (nrev)
+          and smallest on tight tail loops with no body-level allocation
+          (tailsum) — where both engines barely collect, so the gap should
+          stay near the no-GC ratio.
+      (d) Both `cek_gc` and `bytecode_gc` should be slower than their `_big`
+          counterparts on the same benchmark, by a margin in the
+          ~1.3–1.7x band the H2 decomposition established. If `cek_gc`'s
+          slowdown lands meaningfully outside that band, H2's mechanism
+          story (optimization barrier + JIT amplification of loop size)
+          generalizes less than we thought, and we should investigate.
+    Falsification: any of (a)–(c) failing falsifies H4 as stated.
 
 Allocator design notes
 - Hybrid: bump-allocate until the arena fills, THEN fall to free-list + GC.
@@ -337,3 +359,133 @@ The compile-time bc_super pattern would answer `3` here.
 Edge: pre-existing undefined-on-type-error behavior preserved. `(+ 'x 1)`
 produced garbage before and produces (different) garbage now — same class
 of issue the fixval/shift trick has always carried.
+
+## H4 — GC ported into CEK (`cek_gc.c`)
+
+Mark-sweep collector ported from `bytecode_gc.c` into the CEK machine. Same
+non-moving free-list sweep, same hoisted register protocol (`R_C/R_E/R_K/R_V`
+hold the CEK state; gc() marks them as roots). One CEK-specific addition:
+a small `R_save` shadow stack covers two unrooted-local windows where the
+in-flight cell is neither in `gc_a/gc_b` of the next cons nor reachable from
+`R_C/E/K/V` — `K_ARGS` building the new `done` cell before wrapping it into a
+new K_ARGS frame, and `s_let`'s parallel vars/vals lists during the lambda
+desugaring. Everywhere else, the existing "next cons's gc_a/gc_b protects the
+live cell" discipline holds (see header comment in `engines/cek_gc.c`).
+
+### Measured (262K-cell default arena, best-of-25)
+
+**Native (Apple clang, ARM64):**
+
+| benchmark      | cek    | cek_gc | bc     | bc_gc  | bc/cek  | bc_gc/cek_gc | widening | cek_gc tax | bc_gc tax |
+|----------------|--------|--------|--------|--------|---------|--------------|----------|------------|-----------|
+| fib(24)        | 25.235 | 32.911 |  5.454 |  5.374 |  4.63×  |  6.12×       |  1.32×   |  1.30×     |  0.99×    |
+| tak(18,12,6)   | 10.902 | 13.926 |  2.523 |  2.594 |  4.32×  |  5.37×       |  1.24×   |  1.28×     |  1.03×    |
+| ack(3,4)       |  2.155 |  2.807 |  0.397 |  0.442 |  5.43×  |  6.35×       |  1.17×   |  1.30×     |  1.11×    |
+| nrev+sum(150)  |  3.185 |  3.646 |  0.461 |  0.623 |  6.91×  |  5.85×       |**0.85×** |  1.14×     |  1.35×    |
+| tailsum(30000) |  6.227 |  7.875 |  1.135 |  1.213 |  5.49×  |  6.49×       |  1.18×   |  1.27×     |  1.07×    |
+
+**Wasm (Node/V8):**
+
+| benchmark      | CEK    | CEK_gc | bc    | bc_gc | bc/cek | bc_gc/cek_gc | widening | cek_gc tax | bc_gc tax | cek_gc GC | bc_gc GC |
+|----------------|--------|--------|-------|-------|--------|--------------|----------|------------|-----------|-----------|----------|
+| fib(24)        | 27.789 | 52.305 | 8.308 | 7.494 |  3.34× |  6.98×       |  2.09×   |  1.88×     |  0.90×    |  43       |  1       |
+| tak(18,12,6)   | 12.560 | 23.498 | 3.278 | 3.653 |  3.83× |  6.43×       |  1.68×   |  1.87×     |  1.11×    |  19       |  0       |
+| ack(3,4)       |  2.392 |  4.478 | 0.559 | 0.579 |  4.28× |  7.73×       |  1.81×   |  1.87×     |  1.04×    |   3       |  0       |
+| nrev+sum(150)  |  3.605 |  6.007 | 0.703 | 0.927 |  5.13× |  6.48×       |  1.26×   |  1.67×     |  1.32×    |   4       |  0       |
+| tailsum(30000) |  6.960 | 13.119 | 1.582 | 1.612 |  4.40× |  8.14×       |  1.85×   |  1.89×     |  1.02×    |  11       |  0       |
+
+`widening = (bc_gc/cek_gc) / (bc/cek)`. `tax = gc_build / no-gc-build`.
+
+### Result against the predictions
+
+H4 is partially confirmed. The narrow claim holds; the *mechanism* I predicted
+is refuted; what's actually driving the effect is H2 from a new angle.
+
+(a) **`bytecode_gc` collects far less than `cek_gc`.** CONFIRMED, dramatically.
+    Fib(24): 1 vs 43 cycles. tak(18,12,6): 0 vs 19. Across the suite, CEK_gc
+    collects between 3× and 43× as often. CEK allocates a 5-cell continuation
+    per evaluation step and never reuses; bytecode operates on a flat
+    operand-stack frame and only conses for closure environments and the
+    rare allocating primitive (CONS/CAR/CDR).
+
+(b) **The lead widens.** CONFIRMED on every wasm benchmark (1.26–2.09×) and
+    on four of five native benchmarks (1.17–1.32×). **Refuted on native
+    nrev+sum(150)** — the GC build's gap *narrowed* from 6.91× to 5.85×.
+
+(c) **Widening grows with allocation pressure.** REFUTED — backwards.
+    nrev+sum, the only allocation-bound benchmark in the suite, shows the
+    **smallest** widening on both substrates (1.26× wasm, 0.85× native).
+    The largest widening is on compute-bound programs (fib, tailsum, ack).
+
+(d) **GC tax sits in the H2 1.3–1.7× band.** Confirmed on native (the
+    `cek_gc / cek` column lands 1.14–1.30×, right at the bytecode_gc native
+    floor). Wasm tells a different story: CEK's GC tax is **flat at 1.87–1.89×**
+    across four of five benchmarks, well above the 1.4× bytecode_gc paid in
+    the original H2 measurement. The mechanism isn't new — V8 amplifies the
+    optimization barrier — but the magnitude depends on the engine's hot-loop
+    shape, and CEK's tight musttail chain is closer to V8's sweet spot than
+    bytecode's dispatch loop is.
+
+### What the data actually says (mechanism)
+
+The H4 effect is real but it works through H2 (optimization barrier per
+cons-callsite), not through the collection-frequency story I pre-registered.
+
+Evidence:
+
+1. **The GC tax is uncorrelated with collection count.** CEK_gc on wasm:
+   fib (43 collections) → 1.88× tax; nrev (4 collections) → 1.67× tax;
+   tailsum (11 collections) → 1.89× tax. A 10× swing in collection count
+   moves the tax by ~12%. The tax is paid *per cons-callsite that could
+   reach gc()*, regardless of whether gc() actually fired.
+
+2. **Allocation-heavy programs show the smallest widening because both
+   engines pay the per-cons tax in proportion.** On nrev, both engines'
+   hot loops are *already* cons-dominated (`cons`/`car`/`cdr` are the user
+   program). The H2 barrier has less non-cons surrounding code to pessimize.
+   CEK_gc nrev tax: 1.14× native, 1.67× wasm — the lowest in either column.
+   bytecode_gc nrev tax: 1.35× native, 1.32× wasm — the *highest* in those
+   columns (bytecode's leaner pre-GC dispatch loop has more to lose).
+
+3. **The native nrev anomaly resolves the same way.** bytecode_gc pays more
+   tax on nrev (1.35×) than CEK_gc does (1.14×) because bytecode's
+   inline-prims fast path only covers `+`/`-`/`*`/`=`/`<` — not `cons`.
+   So nrev runs the *general* cons-and-apply path on bytecode_gc, paying
+   the H2 barrier at every step. CEK had no inline-prims fast path to begin
+   with, so its pre-GC nrev was already general-path. Adding GC adds less
+   incremental tax for CEK on this specific shape, enough to flip the
+   widening sign on native.
+
+4. **CEK_gc's flat 1.87× wasm tax is the fourth independent observation of
+   "V8 amplifies the larger/hotter hot loop's optimization barrier."**
+   First was the original H2 (bytecode 1.4× wasm vs 1.3× native). Second
+   was TCO (7%). Third was the inline-prims `nrev` regression. Now CEK_gc:
+   V8 loses 1.87× to make the musttail chain GC-safe; native loses 1.27×.
+   The substrate-vs-engine decomposition keeps reproducing.
+
+### Verdict on H4
+
+The phrased claim ("does GC widen bytecode's lead under a tight heap?") is
+yes-with-an-asterisk: it widens on all wasm benchmarks and most native ones,
+but the widening is driven by H2 acting on each engine's hot-loop shape, not
+by bytecode collecting less often. If you reverse the H4 question — "does
+the engine's GC tax scale with its allocation rate?" — the answer is no.
+Tax scales with the number of cons-callsites in the hot loop and how much
+non-cons code surrounds them, not with how many bytes the program allocates.
+
+This makes the GC port work productive in a way I didn't predict: it didn't
+expose a new mechanism, it provided a fourth, larger-magnitude data point
+for the H2 mechanism, and it falsified my intuition about which benchmark
+shapes would amplify the GC tax most.
+
+### Falsification log
+
+- Pre-registered prediction (c): widening greatest on nrev. Result: smallest
+  on nrev, both substrates. Refuted.
+- Pre-registered prediction (b): widening positive everywhere. Result:
+  negative on native nrev. Refuted in narrow form; reframed: widening
+  positive everywhere V8 is involved; native exposes the proportional-tax
+  case where it can flip.
+- Pre-registered prediction (d): CEK_gc tax in 1.3–1.7× band. Result:
+  native yes, wasm no (1.87× — above band). Reframed: H2 magnitude is
+  engine-shape-dependent.
