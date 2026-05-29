@@ -1,0 +1,170 @@
+# Tiny Lisp → WebAssembly — project handoff
+
+One small Lisp, implemented three ways (tree-walker, CEK machine, bytecode VM),
+compiled to **freestanding wasm32** (no libc, **zero imports**), then driven by
+measurement to a finalist: a bytecode VM with tail-call optimization and a
+hand-rolled **mark-sweep garbage collector**. Built collaboratively in a chat
+session; this file is the handoff so the work can continue in Claude Code.
+
+---
+
+## Working norm — read this first
+
+The whole project runs on **measure, don't guess**. Pre-register a prediction,
+then test it. A long list of "obvious" performance hypotheses were *falsified* by
+benchmarks: the env-lookup hotspot, switch dispatch, CEK's tail calls, TCO making
+recursion "unbounded", and the source of GC overhead. When in doubt, write a
+microbenchmark or instrument the VM — don't reason from the armchair. Wall-clock
+numbers are V8-on-wasm via Node: trust **ratios, not magnitudes**, use best-of-N,
+and make sure both sides of a comparison actually *complete* (an early error is
+not a fast result — that bug bit us once).
+
+## Quick start
+
+```bash
+bash build.sh                          # builds engines -> *.wasm (needs clang+wasm-ld and node)
+node harness/test_bc.mjs               # bytecode correctness suite
+node harness/lisp-cli.mjs -e "(begin (define fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))) (fib 20))"
+# open web/tiny-lisp-vm.html in a browser — self-contained live REPL + writeup
+```
+
+## The language
+
+- **32-bit tagged values**, low 2 bits = tag: `00` fixnum (30-bit signed,
+  **wraps at ~536M**), `01` cons (index into the cell arena), `10` symbol
+  (interned, stable), `11` special (nil / true / error / primitives).
+- **Special forms:** `quote if define lambda let begin`.
+- **Primitives:** `cons car cdr + - * = < null? pair? list?`.
+  **No strings, no division, no floats** — smallness is the point; it let us
+  build the *same* semantics three ways and compare architectures honestly.
+- **Reader:** recursive descent, `'` quote shorthand, tolerant of a missing `)`.
+
+## The three engines — `engines/`
+
+| file | architecture | verdict |
+|---|---|---|
+| `lisp.c` | tree-walker (recursive eval over the cons-tree) | baseline, 1.0× |
+| `cek.c` | CEK machine (explicit Control/Env/Kont, wasm tail calls) | **2.2× slower** — clang already tail-eliminates the tree-walker's self-recursion, so CEK paid for heap continuations and got nothing back |
+| `bytecode.c` | compile-once to a flat u32 ISA, stack VM, in-VM TCO (`OP_TAILCALL`) | **2.3–3.9× faster — winner** |
+| `bytecode_gc.c` | bytecode VM + mark-sweep GC (**the finalist**) | unbounded recursion in fixed memory |
+
+Bytecode's biggest win (3.9×) is on allocation-heavy list reversal, smallest
+(2.3×) on call-bound `tak`. Full numbers in `FINDINGS.md`.
+
+## The bytecode ISA — the decoupling seam
+
+Opcodes: `CONST LOADL LOADG DEFG POP JMP JFALSE CLOSURE CALL RET HALT`
+(+ `PADD PSUB PMUL PEQ PLT` in the superinstruction build). The compiler→VM split
+is a real producer/consumer seam: a **flat u32 array is the entire interface**
+(plus the arena for any quoted constants). This is *why* the bytecode VM — alone
+among the three — decouples cleanly. The tree-walker and CEK consume the AST
+cons-graph + symbol table, i.e. "share the whole heap," so they have no thin seam.
+
+## Garbage collector — `engines/bytecode_gc.c`
+
+Non-moving **mark-sweep**, chosen over a copying collector because every heap
+object is a uniform cons cell (so no fragmentation) and indices never move (roots
+are only *marked*, never rewritten — a moving collector would have to find and
+rewrite every scattered index). Hybrid allocator: bump until the arena fills, then
+free-list + collect. Roots: operand stack, env, saved frames, globals, and the
+cons-tagged `OP_CONST` constants embedded in the bytecode. Pre-registered, tested:
+
+- **H1 (unbounded): confirmed.** `countdown(10,000,000)` completes in a **512-cell**
+  arena (GC ran 118,577×). TCO flattens the stack, GC flattens the heap.
+- **H5 (root set complete): confirmed.** `fib(18)` correct while GC fired 120×
+  mid-evaluation in 512 cells; suite 19/19; quoted data survives collection.
+- **H2 (overhead): ~1.3–1.7×, and it is NOT collection.** Isolation showed
+  collection itself is nearly free; the cost is an **optimization barrier** — once
+  `cons` can reach `gc()`, the compiler can't treat allocation as side-effect-free.
+
+Build note: `bytecode_gc.c` needs `-fno-builtin` (it defines its own `memset`).
+
+## The optimization ladder — `prototype/` (most recent thread)
+
+From `bc_orig.c` (simplest: **no TCO, no GC**), we explored *where* to implement
+"make primitive calls cheap," at three levels:
+
+| build | what | speed vs base | instrs | allocation | correctness |
+|---|---|---|---|---|---|
+| `bc_base.c` | `OP_CALL`→`apply_prim`, args consed (+ instruction counter) | 1.0× | — | base | full |
+| `bc_inline.c` | VM checks `is_prim` at runtime, inlines `+ - * = <` (no arg consing) | 1.2× | **identical** | 3× arena headroom; `tak` error→`7` | full (rebind-safe) |
+| `bc_super.c` | **compiler** emits dedicated `OP_PADD…` opcodes (superinstructions) | **1.6×** | **18% fewer** | same as inline | diverges on global prim *redefinition* |
+
+**Lesson:** each level up trades generality for speed. Runtime-inline checks the
+live value (correct even if `+` is redefined) but pays a per-call check.
+Compile-time superinstructions are fastest and finally cut the instruction count,
+but bake in "primitives aren't rebound" (`(define +)` then `(+ 1 2)` gives 99 on
+base/inline, 3 on super). Real Schemes gate exactly this behind
+`usual-integrations`-style declarations. The instruction counter that made this
+measurable was added by **hand-editing the WAT** (see `wat/`).
+
+## Hand-editable WAT — `wat/`
+
+Workflow: `clang → wasm2wat → hand-edit → wat2wasm → run` (round-trip faithful).
+
+- `probe.wat` — a hand-written 4-opcode stack VM with **inline allocation** (proof
+  the hot core is tractable in raw WAT; the inline `cons` has zero function calls).
+- `bc_edit.c` — `bc_orig` with `run()` marked `noinline` so the dispatch is its own
+  `$run` function.
+- `bc_edit.wat` — clang's disassembly of `bc_edit` (the editable substrate).
+- `bc_instr.wat` — `bc_edit.wat` hand-augmented with an instruction counter.
+
+**Finding:** hand-WAT is great for **additive/observational** edits (instrumentation
+dropped cleanly into `$run`). For **logic** edits that touch the data flow you must
+reverse-engineer clang's frame layout (at `-O0`: frame pointer = `local 3`, `vsp`
+at frame offset 76, `n`@28, `fn`@24) — fragile, one wrong offset is silent
+corruption — so do those in C and recompile. Separately: the GC's measured ~1.6×
+overhead lives at the **V8 JIT** layer, not in clang's wasm (the slower build's
+wasm is actually *leaner*; V8 optimizes a call-containing hot loop less). Tools:
+`npm i -g wabt` provides `wasm2wat`/`wat2wasm`.
+
+## Build & run details
+
+All engines: `--target=wasm32 -nostdlib -Wl,--no-entry -Wl,--export-dynamic
+-Wl,--allow-undefined -Wl,--initial-memory=33554432`. Extra per engine:
+- `cek.c` needs **`-mtail-call`** (uses `__attribute__((musttail))`).
+- `bytecode_gc.c` needs **`-fno-builtin`** (defines its own `memset`/`memcpy`).
+- Arenas are tunable via `#define MAX_CELLS`. `build.sh` also emits big-arena
+  `*_big.wasm` for `harness/bench.mjs`, since the no-GC engines exhaust a small
+  arena on heavy benchmarks.
+
+**wasm ABI** (modules have zero imports; they're *libraries*, not commands — no
+`_start`/WASI, so a standalone runtime's `run` subcommand won't work; embed via the
+host API): write source bytes at `input_ptr()`, call `eval_source(len)` → returns
+output length, read the result string at `output_ptr()`. `bytecode_gc.wasm` also
+exports `gc_count()`; the `bc_base/inline/super` builds export `icount()`
+(instructions dispatched). `harness/lisp-cli.mjs` is a minimal driver.
+
+## Open threads / next steps
+
+1. **Superinstructions into the GC build** — same edit on `bytecode_gc.c`, but the
+   benefit appears as *fewer GC cycles* (less consing) rather than arena headroom.
+2. **Redefinition guard** so superinstructions are fast *and* correct under `(define +)`.
+3. **All-engine GC** — port the collector into the tree-walker/CEK to test H4: does
+   GC widen bytecode's lead under a tight heap? (Bytecode allocates less → collects
+   less often.)
+4. **Hand-written-VM north star** — a clean hand-written WAT interpreter over our
+   existing ISA, reusing the clang front-end as the bytecode *producer* (~400 lines;
+   the tractable, instructive slice — skip hand-writing the reader/printer/compiler).
+5. **TCE cross-validation via WAT diff** — the one place wasm is authoritative
+   (a structural question, not a timing one): confirm clang turned the tree-walker's
+   self-tail-call into a loop, then perturb it out of tail position and watch it
+   become a real recursive `call`.
+
+## File map
+
+```
+build.sh                 build all engines -> *.wasm (root)
+FINDINGS.md              full empirical record (engine benchmarks + GC hypotheses)
+*.wasm                   prebuilt engines (run immediately without clang)
+engines/                 the three architectures + GC finalist
+  lisp.c cek.c bytecode.c bytecode_gc.c
+prototype/               no-TCO/no-GC line + the optimization ladder
+  bc_orig.c bc_base.c bc_inline.c bc_super.c
+wat/                     hand-editable WAT experiments
+  probe.wat bc_edit.c bc_edit.wat bc_instr.wat
+harness/                 node drivers
+  test_bc.mjs bench.mjs lisp-cli.mjs
+web/                     self-contained browser showcase
+  tiny-lisp-vm.html build-standalone.sh
+```
