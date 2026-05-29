@@ -1,0 +1,15 @@
+# Build artifacts that are regenerable from source via `bash build.sh [--native]`.
+# The four default-arena wasm engines (lisp/cek/bytecode/bytecode_gc) ARE
+# tracked at the repo root so the harnesses work without running the build.
+
+# Big-arena wasm variants for harness/bench.mjs
+*_big.wasm
+
+# Prototype-line wasm (optimization ladder)
+bc_base.wasm
+bc_inline.wasm
+bc_super.wasm
+
+# Native binaries (Mach-O / ELF, platform-specific)
+native_bench_*
+native_cli_*
