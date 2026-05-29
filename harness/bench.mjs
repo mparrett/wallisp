@@ -14,11 +14,12 @@
 import fs from 'fs';
 
 const ENGINES = [
-  ['tree-walker', 'lisp_big.wasm',    false],
-  ['CEK',         'cek_big.wasm',     false],
-  ['CEK_gc',      'cek_gc.wasm',      true],   // GC build — gc_count() exported
+  ['tree-walker', 'lisp_big.wasm',     false],
+  ['TW_gc',       'lisp_gc.wasm',      true],   // tree-walker + GC (H4)
+  ['CEK',         'cek_big.wasm',      false],
+  ['CEK_gc',      'cek_gc.wasm',       true],
   ['bytecode',    'bytecode_big.wasm', false],
-  ['bytecode_gc', 'bytecode_gc.wasm', true],   // GC build — gc_count() exported
+  ['bytecode_gc', 'bytecode_gc.wasm',  true],
 ];
 
 // Each: [name, shape-it-stresses, lisp-source]
@@ -93,7 +94,7 @@ const main = async () => {
   const bcIdx = engines.findIndex(([n]) => n === 'bytecode');
   let header = 'benchmark'.padEnd(18);
   for (const [name] of engines) header += name.padStart(w);
-  header += '       bc vs TW   gc (cek_gc / bc_gc)';
+  header += '       bc vs TW   gc (tw_gc / cek_gc / bc_gc)';
   console.log(header);
   console.log('-'.repeat(header.length));
 

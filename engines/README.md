@@ -11,6 +11,7 @@ See [`../DEV.md`](../DEV.md) for the architectural tour and
 | 3     | `bytecode.c`      | compile-once + stack VM + TCO         | 2.3–3.9× faster — winner |
 | 4     | `bytecode_gc.c`   | bytecode + mark-sweep GC              | finalist                 |
 | 5     | `cek_gc.c`        | CEK + mark-sweep GC (H4 substrate)    | engine-shape study       |
+| 6     | `lisp_gc.c`       | tree-walker + GC (shadow-stack roots) | TRE-preserving GC port   |
 
 All four share the same reader, printer, arena, primitives, and `eval_source`
 wasm ABI. Only the evaluator differs — that's what makes the A/B honest.

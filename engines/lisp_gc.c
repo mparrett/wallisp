@@ -1,0 +1,506 @@
+// lisp_gc.c — tree-walker + mark-sweep garbage collector.
+//
+// Same evaluator as lisp.c. Adds mark-sweep GC and the bookkeeping that comes
+// with it. This is the harder GC port — bytecode_gc and cek_gc had structured
+// register state we could hoist; the tree-walker is a recursive `eval()` whose
+// live cons references live in C locals across recursive calls. A naive port
+// collects them. The fix here is an explicit shadow stack (R_save) that every
+// allocating recursion pushes/pops.
+//
+// What's added on top of lisp.c:
+//   * Mark-sweep collector lifted from bytecode_gc.c (non-moving, free-list
+//     sweep, mark bits + explicit mark stack).
+//   * R_save shadow stack with a strict push/pop protocol in eval() and
+//     eval_list(). At each entry, (x, env) get pushed. Intermediate locals
+//     that span allocating recursive calls (fn, args, newenv, v) get extra
+//     slots when alive. Every return path restores R_ssp before returning.
+//
+//   * Tail returns (`return eval(next, env)`) keep clang's TRE working — the
+//     property that makes the tree-walker unbounded (H1 for the tree-walker)
+//     — by extracting `next` while the outer frame is still rooted, popping
+//     the outer frame, then returning. The pop and the inner eval's prologue
+//     push cancel net-zero, the C frame is recycled by TRE, and the shadow
+//     stack stays at the caller's baseline. Deep tail recursion still flat.
+//
+// What is NOT done:
+//   * Mid-eval roots for `x`'s sub-expressions read multiple times. `x` is
+//     rooted; reading `car(cdr(x))` is safe; the value returned is in a C
+//     local that survives only until the next allocating call. That's enough
+//     because each branch either uses the value immediately (no alloc in
+//     between) or pushes it.
+//
+// Build: -fno-builtin (memset stub keeps modules zero-imports). No tail-call
+//        extension needed — the tree-walker uses ordinary C recursion + TRE.
+
+typedef unsigned int   u32;
+typedef int            i32;
+typedef unsigned char  u8;
+
+void* memset(void* p, int c, unsigned long n){ u8* s=(u8*)p; while(n--) *s++=(u8)c; return p; }
+void* memcpy(void* d, const void* s, unsigned long n){ u8* a=(u8*)d; const u8* b=(const u8*)s; while(n--) *a++=*b++; return d; }
+
+// ---- tag scheme (identical to lisp.c) --------------------------------------
+#define TAG_MASK  3u
+#define TAG_FIX   0u
+#define TAG_CONS  1u
+#define TAG_SYM   2u
+#define TAG_SPEC  3u
+
+#define mkfix(n)   ((u32)(((i32)(n)) << 2) | TAG_FIX)
+#define fixval(v)  (((i32)(v)) >> 2)
+#define mkcons(i)  (((u32)(i) << 2) | TAG_CONS)
+#define considx(v) ((v) >> 2)
+#define mksym(i)   (((u32)(i) << 2) | TAG_SYM)
+#define symidx(v)  ((v) >> 2)
+#define mkspec(i)  (((u32)(i) << 2) | TAG_SPEC)
+
+#define tagof(v)   ((v) & TAG_MASK)
+#define is_fix(v)  (tagof(v)==TAG_FIX)
+#define is_cons(v) (tagof(v)==TAG_CONS)
+#define is_sym(v)  (tagof(v)==TAG_SYM)
+
+enum {
+  SP_NIL=0, SP_T, SP_ERR, SP_UNBOUND,
+  PR_CONS, PR_CAR, PR_CDR, PR_ADD, PR_SUB, PR_MUL, PR_EQ, PR_LT,
+  PR_NULLP, PR_PAIRP, PR_LISTQ,
+  SP_COUNT
+};
+#define NIL      mkspec(SP_NIL)
+#define TRUE     mkspec(SP_T)
+#define ERR      mkspec(SP_ERR)
+#define UNBOUND  mkspec(SP_UNBOUND)
+#define is_nil(v) ((v)==NIL)
+#define is_prim(v) (tagof(v)==TAG_SPEC && ((v)>>2) >= PR_CONS && ((v)>>2) < SP_COUNT)
+
+// ---- arena (matches bytecode_gc/cek_gc default for comparable timings) -----
+#define MAX_CELLS 262144
+typedef struct { u32 car, cdr; } Cell;
+static Cell cells[MAX_CELLS];
+static u32  cell_top = 0;
+static int  g_oom = 0;
+
+// ---- mark-sweep GC state ---------------------------------------------------
+#define FREE_END 0xFFFFFFFFu
+static u8  markbit[MAX_CELLS];
+static u32 markstk[MAX_CELLS];
+static u32 msp;
+static u32 freelist = FREE_END;
+static u32 gc_a, gc_b;
+static int gc_enabled = 0;
+static u32 g_numgc = 0;
+
+// Shadow stack — the tree-walker's only GC handle.
+// Sized for ack(3,4) worst case (~500 deep × ~5 slots per frame) and ap/nrev
+// (~300 deep × ~5 slots). 16384 is comfortable and only 64KB.
+#define SAVE_MAX 16384
+static u32 R_save[SAVE_MAX];
+static u32 R_ssp = 0;
+
+#define MAX_SYMS    1024
+#define SYM_CHARS   16
+static char symname[MAX_SYMS][SYM_CHARS];
+static u32  symlen[MAX_SYMS];
+static u32  sym_top = 0;
+
+static void gc(void);
+
+static u32 cons_slow(u32 a, u32 d){
+  u32 i;
+  if(freelist!=FREE_END){ i=freelist; freelist=cells[i].cdr; }
+  else {
+    if(gc_enabled){ gc_a=a; gc_b=d; gc(); }
+    if(freelist!=FREE_END){ i=freelist; freelist=cells[i].cdr; }
+    else { g_oom=1; return ERR; }
+  }
+  cells[i].car=a; cells[i].cdr=d; return mkcons(i);
+}
+static inline u32 cons(u32 a, u32 d){
+  if(cell_top<MAX_CELLS){ u32 i=cell_top++; cells[i].car=a; cells[i].cdr=d; return mkcons(i); }
+  return cons_slow(a,d);
+}
+static u32 car(u32 v){ return is_cons(v) ? cells[considx(v)].car : NIL; }
+static u32 cdr(u32 v){ return is_cons(v) ? cells[considx(v)].cdr : NIL; }
+
+// ---- symbol interner (identical to lisp.c) ---------------------------------
+static int streq(const char*a,u32 la,const char*b,u32 lb){
+  if(la!=lb) return 0; for(u32 i=0;i<la;i++) if(a[i]!=b[i]) return 0; return 1;
+}
+static u32 intern(const char* s, u32 len){
+  if(len>SYM_CHARS) len=SYM_CHARS;
+  for(u32 i=0;i<sym_top;i++)
+    if(streq(symname[i],symlen[i],s,len)) return mksym(i);
+  if(sym_top>=MAX_SYMS) return ERR;
+  u32 i=sym_top++;
+  for(u32 k=0;k<len;k++) symname[i][k]=s[k];
+  symlen[i]=len;
+  return mksym(i);
+}
+
+static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin;
+
+// ---- reader (identical) ----------------------------------------------------
+static const char* rp;
+static const char* rend;
+
+static void skipws(){
+  while(rp<rend){
+    char c=*rp;
+    if(c==' '||c=='\t'||c=='\n'||c=='\r'){rp++;}
+    else if(c==';'){ while(rp<rend && *rp!='\n') rp++; }
+    else break;
+  }
+}
+static int is_delim(char c){
+  return c==' '||c=='\t'||c=='\n'||c=='\r'||c=='('||c==')'||c==';'||c==0;
+}
+static u32 read_expr();
+
+static u32 read_list(){
+  u32 first=NIL; u32 last=NIL;
+  for(;;){
+    skipws();
+    if(rp>=rend) return first;
+    if(*rp==')'){ rp++; return first; }
+    u32 e=read_expr();
+    u32 link=cons(e,NIL);
+    if(link==ERR) return ERR;
+    if(is_nil(first)){ first=link; last=link; }
+    else { cells[considx(last)].cdr=link; last=link; }
+  }
+}
+static u32 read_atom(){
+  const char* start=rp;
+  while(rp<rend && !is_delim(*rp)) rp++;
+  u32 len=(u32)(rp-start);
+  int neg=0; const char* p=start; u32 n=len;
+  if(n>0 && (*p=='-'||*p=='+')){ neg=(*p=='-'); p++; n--; }
+  if(n>0){
+    int isnum=1; i32 val=0;
+    for(u32 i=0;i<n;i++){ char c=p[i]; if(c<'0'||c>'9'){isnum=0;break;} val=val*10+(c-'0'); }
+    if(isnum) return mkfix(neg?-val:val);
+  }
+  return intern(start,len);
+}
+static u32 read_expr(){
+  skipws();
+  if(rp>=rend) return ERR;
+  char c=*rp;
+  if(c=='('){ rp++; return read_list(); }
+  if(c=='\''){ rp++; u32 e=read_expr(); return cons(s_quote,cons(e,NIL)); }
+  return read_atom();
+}
+
+// ---- environment -----------------------------------------------------------
+static u32 env_lookup(u32 env, u32 sym){
+  for(u32 f=env; is_cons(f); f=cdr(f)){
+    u32 binding=car(f);
+    if(is_cons(binding) && car(binding)==sym) return cdr(binding);
+  }
+  return UNBOUND;
+}
+// env_define is GC-safe by chained-cons discipline: inner cons protects
+// (sym, val), outer cons protects (inner_result, env) via gc_a/gc_b. Callers
+// only need to ensure `env` is rooted before calling.
+static u32 env_define(u32 env, u32 sym, u32 val){
+  return cons(cons(sym,val), env);
+}
+static u32 g_head;
+static u32 g_env;
+static void global_define(u32 sym, u32 val){
+  u32 link=cons(cons(sym,val), cdr(g_head));
+  cells[considx(g_head)].cdr = link;
+}
+
+// ---- closures (identical) --------------------------------------------------
+static u32 s_closure;
+static u32 make_closure(u32 params, u32 body, u32 env){
+  return cons(s_closure, cons(params, cons(body, cons(env, NIL))));
+}
+static int is_closure(u32 v){ return is_cons(v) && car(v)==s_closure; }
+
+// ---- primitives (identical) ------------------------------------------------
+static u32 apply_prim(u32 prim, u32 args){
+  u32 id=prim>>2;
+  u32 a=car(args), b=car(cdr(args));
+  switch(id){
+    case PR_CONS: return cons(a,b);
+    case PR_CAR:  return car(a);
+    case PR_CDR:  return cdr(a);
+    case PR_ADD:  return mkfix(fixval(a)+fixval(b));
+    case PR_SUB:  return mkfix(fixval(a)-fixval(b));
+    case PR_MUL:  return mkfix(fixval(a)*fixval(b));
+    case PR_EQ:   return (a==b)?TRUE:NIL;
+    case PR_LT:   return (fixval(a)<fixval(b))?TRUE:NIL;
+    case PR_NULLP:return is_nil(a)?TRUE:NIL;
+    case PR_PAIRP:return is_cons(a)?TRUE:NIL;
+    case PR_LISTQ:return (is_nil(a)||is_cons(a))?TRUE:NIL;
+  }
+  return ERR;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// EVAL — recursive tree-walker, GC-safe via R_save shadow stack.
+//
+// Discipline at every entry:
+//     base = R_ssp;
+//     R_save[R_ssp++] = x;        // [base+0]
+//     R_save[R_ssp++] = env;      // [base+1]
+//   …and at every return path: R_ssp = base; before returning.
+//
+// Tail-return pattern that preserves clang's TRE (the H1 property):
+//     u32 next = car(cdr(cdr(x)));    // read while x rooted
+//     R_ssp = base;                   // release outer frame
+//     return eval(next, env);         // TRE candidate — inner pushes its own frame
+//
+// The C local `env` survives the pop because no allocation happens between
+// `R_ssp = base` and the recursive eval call's prologue. clang's TRE then
+// recycles the C stack frame and the shadow stack stays at the caller's
+// baseline — deep tail recursion runs flat in both stacks.
+// ════════════════════════════════════════════════════════════════════════════
+
+static u32 eval(u32 x, u32 env);
+
+// eval_list — recursive non-tail. Shadow stack:
+//   [base+0]=lst, [base+1]=env, [base+2]=v (across the recursive eval_list).
+static u32 eval_list(u32 lst, u32 env){
+  u32 base = R_ssp;
+  R_save[R_ssp++] = lst;
+  R_save[R_ssp++] = env;
+  if(!is_cons(lst)){ R_ssp = base; return NIL; }
+  u32 v = eval(car(lst), env);
+  if(v==ERR){ R_ssp = base; return ERR; }
+  R_save[R_ssp++] = v;
+  u32 rest = eval_list(cdr(lst), env);
+  if(rest==ERR){ R_ssp = base; return ERR; }
+  u32 result = cons(v, rest);                  // cons protects v, rest via gc_a/gc_b
+  R_ssp = base;
+  return result;
+}
+
+static u32 eval(u32 x, u32 env){
+  if(g_oom) return ERR;
+  u32 base = R_ssp;
+  R_save[R_ssp++] = x;                          // [base+0]
+  R_save[R_ssp++] = env;                        // [base+1]
+
+  // self-evaluating
+  if(is_fix(x) || tagof(x)==TAG_SPEC){ R_ssp = base; return x; }
+  if(is_sym(x)){
+    u32 v = env_lookup(env, x);
+    R_ssp = base;
+    return (v==UNBOUND) ? ERR : v;
+  }
+
+  u32 op = car(x);
+  if(op==s_quote){ u32 r = car(cdr(x)); R_ssp = base; return r; }
+
+  if(op==s_if){
+    u32 t = eval(car(cdr(x)), env);
+    if(t==ERR){ R_ssp = base; return ERR; }
+    // Tail call: extract `next` while x is still rooted, then pop, then TRE.
+    u32 next = is_nil(t) ? car(cdr(cdr(cdr(x)))) : car(cdr(cdr(x)));
+    R_ssp = base;
+    return eval(next, env);                     // TRE-preserving
+  }
+
+  if(op==s_define){
+    u32 name = car(cdr(x));                     // name is a symbol — not collectable
+    u32 val  = eval(car(cdr(cdr(x))), env);
+    if(val==ERR){ R_ssp = base; return ERR; }
+    // global_define's internal conses chain protects via gc_a/gc_b; val is the
+    // gc_b of the inner cons(name, val), so it's covered.
+    global_define(name, val);
+    R_ssp = base;
+    return name;
+  }
+
+  if(op==s_lambda){
+    u32 params = car(cdr(x));
+    u32 body   = car(cdr(cdr(x)));
+    u32 clo    = make_closure(params, body, env);   // chained-cons safe
+    R_ssp = base;
+    return clo;
+  }
+
+  if(op==s_let){
+    // (let ((a v) (b w)) body): extend env left-to-right, then eval body in tail.
+    // newenv accumulates and needs to span the per-binding eval() calls; pin it.
+    u32 binds  = car(cdr(x));
+    u32 body   = car(cdr(cdr(x)));
+    u32 ne_slot = R_ssp;
+    R_save[R_ssp++] = env;                      // [base+2] = newenv accumulator
+    for(u32 b = binds; is_cons(b); b = cdr(b)){
+      u32 pair = car(b);                        // pair, val_expr reachable via x
+      u32 val_expr = car(cdr(pair));
+      u32 v = eval(val_expr, env);              // recurse; R_save[ne_slot] keeps newenv alive
+      if(v==ERR){ R_ssp = base; return ERR; }
+      // v is fresh; env_define's inner cons protects v via gc_b before any
+      // further allocation. R_save[ne_slot] holds the current newenv.
+      R_save[ne_slot] = env_define(R_save[ne_slot], car(pair), v);
+    }
+    u32 nenv = R_save[ne_slot];
+    R_ssp = base;
+    return eval(body, nenv);                    // TRE-preserving
+  }
+
+  if(op==s_begin){
+    // Sequence: evaluate forms left-to-right. Last form in tail position.
+    u32 r = NIL;
+    u32 b = cdr(x);
+    if(!is_cons(b)){ R_ssp = base; return NIL; }
+    // Walk until the last form; evaluate non-tail forms and discard result.
+    while(is_cons(cdr(b))){
+      r = eval(car(b), env);
+      if(r==ERR){ R_ssp = base; return ERR; }
+      b = cdr(b);                               // b's cells reachable via x
+    }
+    u32 last = car(b);
+    R_ssp = base;
+    return eval(last, env);                     // TRE-preserving
+  }
+
+  // application: evaluate operator, then args, then dispatch.
+  // Slot layout during the application path:
+  //   [base+0] x   [base+1] env   [base+2] fn   [base+3] args
+  //   [base+4] newenv (closure-bind accumulator, only in closure branch)
+  u32 fn = eval(op, env);
+  if(fn==ERR){ R_ssp = base; return ERR; }
+  R_save[R_ssp++] = fn;                         // [base+2]
+  u32 args = eval_list(cdr(x), env);
+  if(args==ERR){ R_ssp = base; return ERR; }
+  R_save[R_ssp++] = args;                       // [base+3]
+
+  if(is_prim(fn)){
+    u32 r = apply_prim(fn, args);               // PR_CONS allocates; args/fn rooted via R_save
+    R_ssp = base;
+    return r;
+  }
+  if(is_closure(fn)){
+    u32 ne_slot = R_ssp;
+    R_save[R_ssp++] = car(cdr(cdr(cdr(fn))));   // [base+4] = closure's captured env
+    u32 params = car(cdr(fn));                  // params/body reachable via fn at [base+2]
+    u32 p = params, a = args;
+    while(is_cons(p) && is_cons(a)){
+      R_save[ne_slot] = env_define(R_save[ne_slot], car(p), car(a));
+      p = cdr(p); a = cdr(a);
+    }
+    u32 body = car(cdr(cdr(fn)));
+    u32 nenv = R_save[ne_slot];
+    R_ssp = base;
+    return eval(body, nenv);                    // TRE-preserving
+  }
+  R_ssp = base;
+  return ERR;                                   // applied a non-function
+}
+
+// ---- garbage collector -----------------------------------------------------
+static void mark(u32 v){
+  if(!is_cons(v)) return;
+  u32 i=considx(v);
+  if(markbit[i]) return;
+  markbit[i]=1;
+  markstk[msp++]=i;
+}
+static void gc(void){
+  g_numgc++;
+  for(u32 i=0;i<MAX_CELLS;i++) markbit[i]=0;
+  msp=0;
+  // roots
+  mark(gc_a); mark(gc_b);                       // in-flight cons args
+  mark(g_env);                                  // = g_head; covers all globals
+  for(u32 i=0; i<R_ssp; i++) mark(R_save[i]);   // every active eval/eval_list frame
+  // trace
+  while(msp>0){ u32 i=markstk[--msp]; mark(cells[i].car); mark(cells[i].cdr); }
+  // sweep
+  freelist=FREE_END;
+  for(u32 i=0;i<MAX_CELLS;i++)
+    if(!markbit[i]){ cells[i].cdr=freelist; freelist=i; }
+}
+
+// ---- init ------------------------------------------------------------------
+static void bindp(const char* nm, u32 prim){
+  u32 l=0; while(nm[l])l++;
+  u32 s=intern(nm,l);
+  global_define(s,prim);
+}
+static void init(){
+  cell_top=0; sym_top=0; g_oom=0; g_numgc=0; gc_enabled=0;
+  freelist=FREE_END; R_ssp=0; gc_a=gc_b=0;
+  s_quote =intern("quote",5);
+  s_if    =intern("if",2);
+  s_define=intern("define",6);
+  s_lambda=intern("lambda",6);
+  s_let   =intern("let",3);
+  s_begin =intern("begin",5);
+  s_closure=intern("%closure",8);
+  g_head = cons(UNBOUND, NIL);
+  g_env  = g_head;
+  u32 s_nil=intern("nil",3), s_t=intern("t",1);
+  global_define(s_nil,NIL);
+  global_define(s_t,TRUE);
+  bindp("cons",mkspec(PR_CONS)); bindp("car",mkspec(PR_CAR));
+  bindp("cdr",mkspec(PR_CDR));   bindp("+",mkspec(PR_ADD));
+  bindp("-",mkspec(PR_SUB));     bindp("*",mkspec(PR_MUL));
+  bindp("=",mkspec(PR_EQ));      bindp("<",mkspec(PR_LT));
+  bindp("null?",mkspec(PR_NULLP));bindp("pair?",mkspec(PR_PAIRP));
+  bindp("list?",mkspec(PR_LISTQ));
+}
+
+// ---- printer (identical) ---------------------------------------------------
+#define OUTCAP 4096
+static char outbuf[OUTCAP];
+static u32 outlen;
+static void emit_(char c){ if(outlen<OUTCAP) outbuf[outlen++]=c; }
+static void emits(const char*s){ while(*s) emit_(*s++); }
+static void emitint(i32 n){
+  if(n<0){ emit_('-'); n=-n; }
+  char tmp[12]; int k=0;
+  if(n==0){ emit_('0'); return; }
+  while(n){ tmp[k++]='0'+(n%10); n/=10; }
+  while(k) emit_(tmp[--k]);
+}
+static void print_val(u32 v){
+  if(is_fix(v)){ emitint(fixval(v)); return; }
+  if(v==NIL){ emits("()"); return; }
+  if(v==TRUE){ emits("t"); return; }
+  if(v==ERR||v==UNBOUND){ emits("<error>"); return; }
+  if(is_prim(v)){ emits("<primitive>"); return; }
+  if(is_sym(v)){ u32 i=symidx(v); for(u32 k=0;k<symlen[i];k++) emit_(symname[i][k]); return; }
+  if(is_closure(v)){ emits("<lambda>"); return; }
+  if(is_cons(v)){
+    emit_('(');
+    u32 p=v; int first=1;
+    while(is_cons(p)){ if(!first)emit_(' '); first=0; print_val(car(p)); p=cdr(p); }
+    if(!is_nil(p)){ emits(" . "); print_val(p); }
+    emit_(')');
+  }
+}
+
+// ---- exported entry points -------------------------------------------------
+#define INCAP 8192
+char inbuf[INCAP];
+
+__attribute__((export_name("input_ptr")))  char* input_ptr(){ return inbuf; }
+__attribute__((export_name("output_ptr"))) char* output_ptr(){ return outbuf; }
+__attribute__((export_name("gc_count")))   unsigned gc_count(){ return g_numgc; }
+__attribute__((export_name("eval_source")))
+u32 eval_source(u32 len){
+  init();
+  rp=inbuf; rend=inbuf+(len<INCAP?len:INCAP);
+  outlen=0;
+  u32 result=NIL;
+  for(;;){
+    skipws();
+    if(rp>=rend) break;
+    // Reader has unrooted-local windows (first/last in read_list). Keep GC off
+    // during reading; the bump arena handles small ASTs trivially.
+    gc_enabled = 0;
+    u32 form = read_expr();
+    if(form==ERR){ result=ERR; break; }
+    gc_enabled = 1;
+    result = eval(form, g_env);
+    if(result==ERR) break;
+  }
+  print_val(result);
+  return outlen;
+}
