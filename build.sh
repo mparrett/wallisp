@@ -4,14 +4,18 @@
 set -e
 cd "$(dirname "$0")"
 
-FLAGS="--target=wasm32 -nostdlib -Wl,--no-entry -Wl,--export-dynamic -Wl,--allow-undefined"
+# -fno-builtin on all engines: keeps modules zero-imports (the project's headline
+# property). Without it, newer clang (LLVM 20+) synthesizes calls to strlen for
+# reader patterns and memset for large arena zero-init, both of which would become
+# undefined env.* imports in a freestanding wasm32 build.
+FLAGS="--target=wasm32 -nostdlib -fno-builtin -Wl,--no-entry -Wl,--export-dynamic -Wl,--allow-undefined"
 MEM="-Wl,--initial-memory=33554432"      # 32 MB — fits the default 131072 / 262144-cell arenas
 
 echo "engines (default arenas):"
 clang $FLAGS $MEM -O2              -o lisp.wasm         engines/lisp.c
 clang $FLAGS $MEM -O2 -mtail-call  -o cek.wasm          engines/cek.c          # CEK uses wasm tail calls
 clang $FLAGS $MEM -O2              -o bytecode.wasm     engines/bytecode.c
-clang $FLAGS $MEM -O2 -fno-builtin -o bytecode_gc.wasm  engines/bytecode_gc.c  # GC build ships its own memset
+clang $FLAGS $MEM -O2              -o bytecode_gc.wasm  engines/bytecode_gc.c  # GC build ships its own memset
 echo "  -> lisp.wasm cek.wasm bytecode.wasm bytecode_gc.wasm"
 
 echo "prototype line (no TCO / no GC — the optimization ladder):"
