@@ -1,17 +1,23 @@
-// bench.mjs — canonical small-interpreter benchmarks across the three engines.
+// bench.mjs — canonical small-interpreter benchmarks across the four engines.
 //   node bench.mjs
 // Add a benchmark by appending to BENCHMARKS. Each program is self-contained
 // (every eval_source re-inits, so no state persists between runs — include all
-// defines in the source). Results are cross-checked: all three engines must
+// defines in the source). Results are cross-checked: all four engines must
 // agree, else it's flagged. Speed is best-of-N (min) to suppress GC/scheduler
 // noise. Absolute ms are V8-on-wasm; trust the ratios, not the magnitudes.
+//
+// bytecode_gc.wasm uses its DEFAULT arena (262K cells) deliberately — that's
+// what exposes GC pressure so the gc_count column is meaningful. The other
+// three use *_big variants (16M cells) because they have no GC and would
+// exhaust the arena on heavy benchmarks otherwise.
 
 import fs from 'fs';
 
 const ENGINES = [
-  ['tree-walker', 'lisp_big.wasm'],
-  ['CEK',         'cek_big.wasm'],
-  ['bytecode',    'bytecode_big.wasm'],
+  ['tree-walker', 'lisp_big.wasm',    false],
+  ['CEK',         'cek_big.wasm',     false],
+  ['bytecode',    'bytecode_big.wasm', false],
+  ['bytecode_gc', 'bytecode_gc.wasm', true],   // GC build — gc_count() exported
 ];
 
 // Each: [name, shape-it-stresses, lisp-source]
@@ -54,39 +60,43 @@ const BENCHMARKS = [
 async function load(file) {
   const { instance } = await WebAssembly.instantiate(fs.readFileSync(new URL('../'+file, import.meta.url)), {});
   const ex = instance.exports, mem = ex.memory;
-  return (src) => {
+  const run = (src) => {
     const e = new TextEncoder().encode(src);
     new Uint8Array(mem.buffer, ex.input_ptr(), e.length).set(e);
     const n = ex.eval_source(e.length);
     return new TextDecoder().decode(new Uint8Array(mem.buffer, ex.output_ptr(), n));
   };
+  return { run, gc_count: ex.gc_count };
 }
 
-function best(run, src, reps = 25) {
-  let lo = Infinity, res;
+function best(eng, src, reps = 25) {
+  // gc_count() returns g_numgc, which init() resets to 0 at the start of every
+  // eval_source — so we record per-run and report the per-run count (same value
+  // each run since the program is deterministic).
+  let lo = Infinity, res, gc = 0;
   for (let i = 0; i < reps; i++) {
     const t = process.hrtime.bigint();
-    res = run(src);
+    res = eng.run(src);
     const d = Number(process.hrtime.bigint() - t) / 1e6;
     if (d < lo) lo = d;
+    if (eng.gc_count) gc = eng.gc_count(); // overwrites; identical across reps
   }
-  return { ms: lo, res };
+  return { ms: lo, res, gc };
 }
 
 const main = async () => {
   const engines = [];
-  for (const [name, file] of ENGINES) engines.push([name, await load(file)]);
+  for (const [name, file, hasGc] of ENGINES) engines.push([name, hasGc, await load(file)]);
 
-  const w = 16;
+  const w = 14;
   let header = 'benchmark'.padEnd(18);
   for (const [name] of engines) header += name.padStart(w);
-  header += '   bc vs TW';
+  header += '       bc vs TW   gc cycles';
   console.log(header);
   console.log('-'.repeat(header.length));
 
   for (const [name, , src] of BENCHMARKS) {
-    const runs = engines.map(([, run]) => best(run, src));
-    // correctness cross-check
+    const runs = engines.map(([, , eng]) => best(eng, src));
     const results = runs.map(r => r.res);
     const agree = results.every(r => r === results[0]);
     const flag = agree ? '' : '  ⚠ DISAGREE: ' + JSON.stringify(results);
@@ -94,13 +104,16 @@ const main = async () => {
     let line = name.padEnd(18);
     for (const r of runs) line += (r.ms.toFixed(3) + 'ms').padStart(w);
     const tw = runs[0].ms, bc = runs[2].ms;
-    line += ('  ' + (tw / bc).toFixed(2) + 'x');
+    line += ('       ' + (tw / bc).toFixed(2) + 'x').padStart(12);
+    const gcIdx = engines.findIndex(([, hasGc]) => hasGc);
+    const gcRun = gcIdx >= 0 ? runs[gcIdx] : null;
+    line += ('   ' + (gcRun ? gcRun.gc + ' cycles' : '')).padStart(14);
     console.log(line + flag);
   }
 
   console.log('\nresult sanity (should match across engines):');
   for (const [name, , src] of BENCHMARKS) {
-    const r = engines[0][1](src);
+    const r = engines[0][2].run(src);
     console.log(`  ${name.padEnd(18)} = ${r}`);
   }
   console.log('\nshapes:');

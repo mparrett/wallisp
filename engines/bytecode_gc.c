@@ -344,9 +344,22 @@ static u32 run(u32 entry){
       case OP_CALL: {
         u32 n=code[ip++]; u32 fn=vstack[R_vsp-n-1];
         if(is_prim(fn)){
-          u32 args=NIL; for(i32 k=(i32)R_vsp-1;k>=(i32)(R_vsp-n);k--) args=cons(vstack[k],args);
-          u32 r=apply_prim(fn,args);
-          R_vsp-=(n+1); vstack[R_vsp++]=r;
+          u32 id=fn>>2;
+          if(n==2 && id>=PR_ADD && id<=PR_LT){      // inline 2-arg arith/cmp: no cons
+            u32 a=vstack[R_vsp-2], b=vstack[R_vsp-1], r;
+            switch(id){
+              case PR_ADD: r=a+b; break;             // tagged-fixnum direct add (tag bits zero)
+              case PR_SUB: r=a-b; break;
+              case PR_MUL: r=mkfix(fixval(a)*fixval(b)); break;
+              case PR_EQ:  r=(a==b)?TRUE:NIL; break;
+              default:     r=((i32)a<(i32)b)?TRUE:NIL; break; // PR_LT
+            }
+            R_vsp-=3; vstack[R_vsp++]=r;
+          } else {
+            u32 args=NIL; for(i32 k=(i32)R_vsp-1;k>=(i32)(R_vsp-n);k--) args=cons(vstack[k],args);
+            u32 r=apply_prim(fn,args);
+            R_vsp-=(n+1); vstack[R_vsp++]=r;
+          }
         } else if(is_closure(fn)){
           u32 vals=NIL; for(i32 k=(i32)R_vsp-1;k>=(i32)(R_vsp-n);k--) vals=cons(vstack[k],vals);
           u32 frame=cons(vals, clo_env(fn));
@@ -369,9 +382,22 @@ static u32 run(u32 entry){
           R_vsp-=(n+1);
           R_env=frame; ip=clo_body(fn);               // reuse frame: no R_csp push
         } else if(is_prim(fn)){
-          u32 args=NIL; for(i32 k=(i32)R_vsp-1;k>=(i32)(R_vsp-n);k--) args=cons(vstack[k],args);
-          u32 r=apply_prim(fn,args);
-          R_vsp-=(n+1); vstack[R_vsp++]=r;
+          u32 id=fn>>2; u32 r;
+          if(n==2 && id>=PR_ADD && id<=PR_LT){      // inline 2-arg arith/cmp: no cons
+            u32 a=vstack[R_vsp-2], b=vstack[R_vsp-1];
+            switch(id){
+              case PR_ADD: r=a+b; break;
+              case PR_SUB: r=a-b; break;
+              case PR_MUL: r=mkfix(fixval(a)*fixval(b)); break;
+              case PR_EQ:  r=(a==b)?TRUE:NIL; break;
+              default:     r=((i32)a<(i32)b)?TRUE:NIL; break; // PR_LT
+            }
+            R_vsp-=3; vstack[R_vsp++]=r;
+          } else {
+            u32 args=NIL; for(i32 k=(i32)R_vsp-1;k>=(i32)(R_vsp-n);k--) args=cons(vstack[k],args);
+            r=apply_prim(fn,args);
+            R_vsp-=(n+1); vstack[R_vsp++]=r;
+          }
           if(R_csp==0) return r;                       // (shouldn't happen below top level)
           R_csp--; ip=ret_ip[R_csp]; R_env=ret_env[R_csp];   // return the value to caller
         } else return ERR;

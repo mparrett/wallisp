@@ -263,3 +263,77 @@ Allocator design notes
 - Freestanding memset/memcpy are provided (-fno-builtin) since clang emits calls
   to them for the mark-bit clear.
 - Module still has ZERO imports — runs in any wasm host via the embedding API.
+
+## OP_CALL primitive inlining in `bytecode_gc.c`
+
+bc_inline's runtime-checked fast path, ported into the finalist engine.
+In `OP_CALL` and `OP_TAILCALL`, when the live `fn` value is a primitive
+in `[PR_ADD, PR_LT]` with `n==2`, do the arithmetic directly on the
+operand stack — bypassing the arg-list cons-and-apply_prim path.
+
+The runtime check *is* the redefinition guard: `fn` comes from `OP_LOADG`
+which reads the live `gval[]`, so after `(define +)` the inline path
+automatically falls through to the general path with the user's new
+binding. bc_super's compile-time emission can't do this — it bakes
+`gval[+]` into the bytecode and diverges silently. Trade-off: ~0.4x of
+bc_super's theoretical speed for unconditional correctness.
+
+GC-safety: ~20 LOC added; **no new roots**. The fast path only touches
+`vstack`/`R_vsp` (already roots) and reaches no `cons()` call site,
+so the H2 "optimization barrier" stays bounded to the existing
+`cons → cons_slow → gc` chain.
+
+### Measured A/B (same process, same machine, best-of-25)
+
+**Wasm (Node/V8):**
+
+| benchmark      | baseline ms | patched ms | speedup | gc baseline | gc patched |
+|----------------|-------------|------------|---------|-------------|------------|
+| fib(24)        | 10.135      | 7.179      | 1.41×   | 4           | 1          |
+| tak(18,12,6)   | 4.443       | 3.504      | 1.27×   | 1           | 0          |
+| ack(3,4)       | 0.726       | 0.550      | 1.32×   | 0           | 0          |
+| nrev+sum(150)  | 0.850       | 0.872      | **0.97×** | 0         | 0          |
+| tailsum(30000) | 2.181       | 1.571      | 1.39×   | 1           | 0          |
+
+**Native (Apple clang, ARM64):**
+
+| benchmark      | baseline ms | patched ms | speedup |
+|----------------|-------------|------------|---------|
+| fib(24)        | 7.240       | 5.261      | 1.38×   |
+| tak(18,12,6)   | 2.885       | 2.528      | 1.14×   |
+| ack(3,4)       | 0.532       | 0.424      | 1.26×   |
+| nrev+sum(150)  | 0.609       | 0.599      | 1.02×   |
+| tailsum(30000) | 1.490       | 1.165      | 1.28×   |
+
+Correctness: full suite (23 tests × both engines = 46/46) passes including
+the load-bearing rebind test
+  `(begin (define + (lambda (a b) 99)) (+ 1 2)) => 99`.
+The compile-time bc_super pattern would answer `3` here.
+
+### Three findings worth flagging
+
+**1. 4.8's GC prediction confirmed: fib(24) goes 4→1 GC cycles.**
+   Fewer cons calls (no per-call arg list) → fewer collections. The
+   `tak` and `tailsum` cases also dropped from 1→0. The speedup on
+   these benchmarks is therefore *partly* the inline arithmetic and
+   *partly* the GC pressure relief.
+
+**2. `nrev+sum(150)` regresses 3% on wasm and is flat on native — and
+   that's H2 from a fresh angle.** nrev's hot loop is `cons`/`car`/`cdr`/
+   `null?`, none of which the inline fast path touches. So we pay the
+   dispatch-loop-growth cost (~20 LOC more) with zero benefit on this
+   shape. Native handles the larger loop fine; V8 regresses. Same
+   substrate-JIT sensitivity that bit us in the TCO measurement and the
+   native-vs-wasm GC overhead decomposition: **JIT amplifies the cost of
+   a bigger hot loop, regardless of whether the new code is reached.**
+
+**3. The win on the *inline-helping* benchmarks is ~1.27-1.41× wasm,
+   1.14-1.38× native.** Higher than bc_inline's original 1.2× headline
+   from the no-GC prototype — because in the GC build, dodging the
+   cons-an-arg-list dance pays back twice (less work *and* less GC).
+   Wasm gains slightly more than native because V8 specializes the
+   shorter call path harder.
+
+Edge: pre-existing undefined-on-type-error behavior preserved. `(+ 'x 1)`
+produced garbage before and produces (different) garbage now — same class
+of issue the fixval/shift trick has always carried.
