@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wallisp — measuring eight tiny Lisps</title>
+<meta name="description" content="What you learn when you build the same tiny Lisp eight ways and benchmark every choice. A measurement study of interpreter design tradeoffs in C compiled to WebAssembly.">
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/c.min.js"></script>
+<script>addEventListener('DOMContentLoaded', () => hljs.highlightAll());</script>
+
+<style>
+:root {
+  --accent: #c14a3a;
+  --accent-soft: #f0d5cf;
+  --ink: #1a1a1a;
+  --ink-soft: #4b5563;
+  --ink-muted: #6b7280;
+  --bg: #fefefe;
+  --bg-soft: #f7f5f2;
+  --border: #e5e2dd;
+  --bar: #4a6072;
+  --bar-good: #2f7d4a;
+  --bar-bad: #c14a3a;
+  --baseline: #c8c4be;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  line-height: 1.65;
+  font-size: 17px;
+}
+
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 4rem 1.5rem 6rem;
+}
+
+.wide {
+  max-width: 920px;
+  margin: 2.5rem auto;
+  padding: 0 1.5rem;
+}
+
+header.hero {
+  margin-bottom: 4rem;
+}
+
+header.hero .eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 0.75rem;
+}
+
+h1 {
+  font-size: 2.5rem;
+  line-height: 1.15;
+  margin: 0 0 1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+header.hero .lede {
+  font-size: 1.2rem;
+  color: var(--ink-soft);
+  margin: 0;
+  max-width: 580px;
+}
+
+h2 {
+  font-size: 1.6rem;
+  line-height: 1.25;
+  margin: 4rem 0 1rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+h2 .section-num {
+  color: var(--accent);
+  font-weight: 500;
+  margin-right: 0.5em;
+  font-variant-numeric: tabular-nums;
+}
+
+h3 {
+  font-size: 1.15rem;
+  margin: 2rem 0 0.5rem;
+  font-weight: 600;
+}
+
+p { margin: 0 0 1rem; }
+
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-soft); }
+a:hover { border-bottom-color: var(--accent); }
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  background: var(--bg-soft);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+pre {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  overflow-x: auto;
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 1.5rem 0;
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.snippet-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.snippet-pair > div h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
+.snippet-pair pre { margin: 0; }
+
+@media (max-width: 760px) {
+  .snippet-pair { grid-template-columns: 1fr; }
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.5rem 0;
+  font-size: 0.95rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  font-weight: 600;
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 2px solid var(--border);
+}
+
+td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; }
+td.engine { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.9em; }
+
+.grid-table td {
+  text-align: center;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+.grid-table td.empty {
+  color: var(--ink-muted);
+  font-family: inherit;
+  font-style: italic;
+  font-size: 0.85em;
+}
+.grid-table th:first-child, .grid-table td:first-child {
+  text-align: left;
+  font-family: inherit;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 0.95rem;
+}
+
+figure {
+  margin: 2rem 0;
+}
+
+figcaption {
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+  margin-top: 0.75rem;
+  line-height: 1.5;
+}
+
+svg.chart { width: 100%; height: auto; display: block; }
+
+.callout {
+  background: var(--bg-soft);
+  border-left: 3px solid var(--accent);
+  padding: 1rem 1.25rem;
+  margin: 1.5rem 0;
+  font-size: 0.97rem;
+}
+
+.callout p:last-child { margin-bottom: 0; }
+
+.kicker {
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+footer {
+  max-width: 720px;
+  margin: 6rem auto 3rem;
+  padding: 2rem 1.5rem 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.92rem;
+  color: var(--ink-muted);
+}
+
+footer p { margin-bottom: 0.5rem; }
+footer a { color: var(--ink-soft); border-bottom-color: var(--border); }
+</style>
+</head>
+
+<body>
+
+<div class="wrap">
+<header class="hero">
+  <div class="eyebrow">A measurement study</div>
+  <h1>Eight tiny Lisps, one set of benchmarks</h1>
+  <p class="lede">What you actually learn when you build the same language eight ways, pre-register predictions, and let the numbers refute you.</p>
+</header>
+
+<p><strong>wallisp</strong> is a tiny Lisp implemented eight ways in freestanding C, compiled to WebAssembly with zero imports, and driven by measurement to a finalist: a bytecode VM with tail-call optimization and a hand-rolled mark-sweep GC. Along the way, four pre-registered hypotheses were tested and most of them got refuted &mdash; including some that looked obviously correct on paper.</p>
+
+<p>The project isn't a Lisp tutorial. It's a study in how interpreter design choices interact with their compilation substrate, told through eight implementations of the same evaluator.</p>
+
+<h2><span class="section-num">1</span>What was built</h2>
+
+<p>Three evaluator architectures &times; three garbage-collection strategies, eight engines in the grid:</p>
+
+<table class="grid-table">
+  <thead>
+    <tr>
+      <th></th>
+      <th>no GC</th>
+      <th>mark-sweep</th>
+      <th>region-drop</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>tree-walker</td>
+      <td><code>lisp.c</code></td>
+      <td><code>lisp_gc.c</code></td>
+      <td><code>lisp_region.c</code></td>
+    </tr>
+    <tr>
+      <td>CEK machine</td>
+      <td><code>cek.c</code></td>
+      <td><code>cek_gc.c</code></td>
+      <td class="empty">&mdash; not built</td>
+    </tr>
+    <tr>
+      <td>bytecode VM</td>
+      <td><code>bytecode.c</code></td>
+      <td><code>bytecode_gc.c</code></td>
+      <td class="empty">&mdash; not built</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>The two empty cells are honest. Region-drop requires the live state to be a downward-only chain anchored at a stable bottom (the global env). Neither CEK (heap continuations are the live state, they churn mid-eval) nor bytecode (operand stack + call frames churn mid-eval) naturally satisfies that invariant. <strong>Region-drop is a tree-walker-shaped collector, not a universal one.</strong></p>
+
+<p>The tree-walker has a fourth variant too &mdash; <code>lisp_trampoline.c</code>, an explicit <code>while(TRUE)</code> form of the recursive eval &mdash; built to verify a measurement claim, not to test a new design point. We'll come back to it.</p>
+
+<h2><span class="section-num">2</span>The headline: bytecode wins, by a lot</h2>
+
+<p>Bytecode is 1.7&ndash;7&times; faster than every other engine on every benchmark in the suite. Here are all eight on a single program (fib 24), measured in Node/V8:</p>
+
+<figure>
+  <svg class="chart" viewBox="0 0 800 380" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Bar chart of fib(24) wasm time across eight engines">
+    <!-- bar layout: 8 bars, sorted fastest to slowest -->
+    <!-- max value 51.098 (cek_gc), scale factor: 600 / 51.098 = 11.74 -->
+    <!-- label x = 160, bar starts at 165, value labels at bar end + 6 -->
+    <g font-family="ui-sans-serif, system-ui" font-size="13">
+      <!-- bytecode: 7.211 ms -->
+      <text x="155" y="34" text-anchor="end" fill="#1a1a1a">bytecode</text>
+      <rect x="165" y="22" width="84.6" height="20" fill="#c14a3a" rx="2"/>
+      <text x="256" y="36" fill="#1a1a1a" font-variant-numeric="tabular-nums">7.21 ms</text>
+
+      <!-- bytecode_gc: 7.333 ms -->
+      <text x="155" y="66" text-anchor="end" fill="#1a1a1a">bytecode_gc</text>
+      <rect x="165" y="54" width="86.1" height="20" fill="#c14a3a" rx="2"/>
+      <text x="258" y="68" fill="#1a1a1a" font-variant-numeric="tabular-nums">7.33 ms <tspan fill="#6b7280">(finalist)</tspan></text>
+
+      <!-- lisp_region: 12.577 ms -->
+      <text x="155" y="98" text-anchor="end" fill="#1a1a1a">lisp_region</text>
+      <rect x="165" y="86" width="147.6" height="20" fill="#4a6072" rx="2"/>
+      <text x="319" y="100" fill="#1a1a1a" font-variant-numeric="tabular-nums">12.58 ms</text>
+
+      <!-- lisp: 13.301 ms -->
+      <text x="155" y="130" text-anchor="end" fill="#1a1a1a">lisp</text>
+      <rect x="165" y="118" width="156.1" height="20" fill="#4a6072" rx="2"/>
+      <text x="328" y="132" fill="#1a1a1a" font-variant-numeric="tabular-nums">13.30 ms</text>
+
+      <!-- lisp_trampoline: 13.502 ms -->
+      <text x="155" y="162" text-anchor="end" fill="#1a1a1a">lisp_trampoline</text>
+      <rect x="165" y="150" width="158.5" height="20" fill="#4a6072" rx="2"/>
+      <text x="330" y="164" fill="#1a1a1a" font-variant-numeric="tabular-nums">13.50 ms</text>
+
+      <!-- lisp_gc: 18.835 ms -->
+      <text x="155" y="194" text-anchor="end" fill="#1a1a1a">lisp_gc</text>
+      <rect x="165" y="182" width="221.1" height="20" fill="#4a6072" rx="2"/>
+      <text x="393" y="196" fill="#1a1a1a" font-variant-numeric="tabular-nums">18.84 ms</text>
+
+      <!-- cek: 27.163 ms -->
+      <text x="155" y="226" text-anchor="end" fill="#1a1a1a">cek</text>
+      <rect x="165" y="214" width="318.9" height="20" fill="#4a6072" rx="2"/>
+      <text x="491" y="228" fill="#1a1a1a" font-variant-numeric="tabular-nums">27.16 ms</text>
+
+      <!-- cek_gc: 51.098 ms -->
+      <text x="155" y="258" text-anchor="end" fill="#1a1a1a">cek_gc</text>
+      <rect x="165" y="246" width="600" height="20" fill="#4a6072" rx="2"/>
+      <text x="772" y="260" fill="#1a1a1a" font-variant-numeric="tabular-nums" text-anchor="end">51.10 ms</text>
+    </g>
+
+    <!-- axis -->
+    <line x1="165" y1="288" x2="765" y2="288" stroke="#c8c4be" stroke-width="1"/>
+    <g font-family="ui-sans-serif" font-size="11" fill="#6b7280">
+      <text x="165" y="306" text-anchor="middle">0</text>
+      <text x="282.4" y="306" text-anchor="middle">10</text>
+      <text x="399.8" y="306" text-anchor="middle">20</text>
+      <text x="517.2" y="306" text-anchor="middle">30</text>
+      <text x="634.6" y="306" text-anchor="middle">40</text>
+      <text x="752" y="306" text-anchor="middle">50</text>
+      <text x="465" y="328" text-anchor="middle" fill="#1a1a1a">milliseconds (lower is better)</text>
+    </g>
+
+    <!-- tick marks -->
+    <g stroke="#c8c4be" stroke-width="1">
+      <line x1="165" y1="288" x2="165" y2="292"/>
+      <line x1="282.4" y1="288" x2="282.4" y2="292"/>
+      <line x1="399.8" y1="288" x2="399.8" y2="292"/>
+      <line x1="517.2" y1="288" x2="517.2" y2="292"/>
+      <line x1="634.6" y1="288" x2="634.6" y2="292"/>
+      <line x1="752" y1="288" x2="752" y2="292"/>
+    </g>
+  </svg>
+  <figcaption>fib(24), Node/V8 best-of-25. Bytecode is in a different league from the tree-walker variants, which are in turn faster than CEK. Full 5-benchmark numbers preserve this ordering &mdash; see <code>FINDINGS.md</code> in the repo root.</figcaption>
+</figure>
+
+<p>Why bytecode wins is the same on every benchmark: it attacks the axis V8's JIT doesn't already cover. Special-form recognition is compiled once into opcodes (no <code>if(op==s_quote)...if(op==s_if)...</code> cascade per call). Variables are addressed by lexical <code>(depth, index)</code> instead of walked via cons-cell association lists. The operand stack carries values between operations instead of cons'd argument lists allocating on every call. None of these are exotic tricks; they're the standard reasons a stack VM beats a tree-walker.</p>
+
+<p>The bytecode hot loop, abbreviated:</p>
+
+<pre><code class="language-c">case OP_LOADL: {                          // load local — O(1) lexical address
+  u32 d = code[ip++], i = code[ip++], f = R_env;
+  while (d--) f = cdr(f);
+  u32 v = car(f); while (i--) v = cdr(v);
+  vstack[R_vsp++] = car(v); break;
+}
+case OP_CALL: {
+  u32 n = code[ip++]; u32 fn = vstack[R_vsp-n-1];
+  if (is_prim(fn)) {
+    u32 id = fn>>2;
+    if (n == 2 && id >= PR_ADD && id <= PR_LT) {   // inline 2-arg arith — no arg-list cons
+      u32 a = vstack[R_vsp-2], b = vstack[R_vsp-1], r;
+      switch (id) {
+        case PR_ADD: r = a+b; break;
+        case PR_SUB: r = a-b; break;
+        // ...
+      }
+      R_vsp -= 3; vstack[R_vsp++] = r;
+    } else { /* general path */ }
+  }
+  // ...
+}</code></pre>
+
+<p>The point isn't that this code is clever; it's that every operation does the minimum work and nothing more. A tree-walker's <code>(+ 1 2)</code> traverses three cons cells, dispatches through six <code>if</code> branches, builds a two-cell arg list, and calls into <code>apply_prim</code>. The bytecode <code>(+ 1 2)</code> is two <code>OP_CONST</code>s and one <code>OP_CALL</code> that runs the inlined add directly on the operand stack. The constant factor adds up.</p>
+
+<h2><span class="section-num">3</span>The H1 surprise: clang already gave us tail calls</h2>
+
+<p>The original motivation for the CEK machine (engine #2 chronologically) was that the tree-walker would blow the C stack on deep tail recursion. A recursive <code>eval()</code> calling itself for the body of <code>(if cond then else)</code> stacks up a C frame per Lisp call. For <code>(countdown 1000000)</code>, that's a million C frames. Crash.</p>
+
+<p>So we built CEK: explicit Control/Environment/Kontinuation registers, every state transition a wasm tail call via <code>__attribute__((musttail))</code>, recursion depth living in heap-allocated continuations instead of the C stack. Beautiful machine. 2.2&times; slower than the tree-walker on fib.</p>
+
+<p>Then we ran <code>(countdown 1000000)</code> on the tree-walker just to see how it failed. It returned <code>done</code>.</p>
+
+<div class="callout">
+  <p><strong>clang -O2 was already doing tail-call elimination.</strong> The recursive <code>return eval(...)</code> self-call gets transformed into a loop at compile time. The C stack stays flat. The motivation for CEK was a problem the compiler had already solved.</p>
+</div>
+
+<p>This is the kind of finding that looks obvious in retrospect and is invisible in advance. The mal project's <a href="https://github.com/kanaka/mal/blob/master/process/guide.md#step-5-tail-call-optimization">Step 5</a> prescribes the canonical Lisp TCO pattern: wrap eval in <code>while(TRUE)</code>, rebind <code>ast</code> and <code>env</code> on tail branches, <code>continue</code> instead of recursing. Our <code>lisp.c</code> doesn't have that loop. clang's TRE writes it for us.</p>
+
+<p>To verify this framing isn't just a story, we built <code>lisp_trampoline.c</code> &mdash; the explicit mal step 5 form &mdash; and measured it against <code>lisp.c</code>:</p>
+
+<div class="snippet-pair">
+<div>
+<h4>lisp.c &mdash; recursive</h4>
+<pre><code class="language-c">if (op == s_if) {
+  u32 t = eval(car(cdr(x)), env);
+  if (t == ERR) return ERR;
+  if (!is_nil(t))
+    return eval(car(cdr(cdr(x))), env);
+  else
+    return eval(car(cdr(cdr(cdr(x)))), env);
+}</code></pre>
+</div>
+<div>
+<h4>lisp_trampoline.c &mdash; explicit loop</h4>
+<pre><code class="language-c">if (op == s_if) {
+  u32 t = eval(car(cdr(ast)), env);
+  if (t == ERR) return ERR;
+  ast = is_nil(t)
+    ? car(cdr(cdr(cdr(ast))))
+    : car(cdr(cdr(ast)));
+  continue;
+}</code></pre>
+</div>
+</div>
+
+<p>The two engines:</p>
+
+<ul>
+  <li>run within <strong>0.5% of each other</strong> on wasm (1.005&times; mean ratio, every individual benchmark within &plusmn;2%)</li>
+  <li>produce wasm modules <strong>two bytes apart</strong> (9840 vs 9838 bytes, a 0.02% difference)</li>
+  <li>both pass <code>countdown(1,000,000)</code> and mutual <code>(even? 1000000)</code></li>
+</ul>
+
+<p>The recursive form is paying no hidden cost. clang's TRE is doing exactly the transformation mal step 5 prescribes, and the modern C compiler hides nothing here. The "explicit trampoline is the canonical Lisp TCO pattern" stance is correct as a <em>portability guarantee</em> &mdash; works on any C compiler &mdash; but the recursive form is equally fast when the compiler has TRE.</p>
+
+<h2><span class="section-num">4</span>The GC tax: same collector, three different prices</h2>
+
+<p>The mark-sweep collector is the same code in all three GC engines &mdash; the same free list, the same mark bits, the same sweep. But the runtime tax it costs varies wildly. Comparing each GC engine to its no-GC sibling:</p>
+
+<figure>
+  <svg class="chart" viewBox="0 0 800 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Grouped bar chart of GC tax by engine, native vs wasm">
+    <!-- Y axis: 0 to 2.0, scaled 0..240px -->
+    <!-- baseline at 1.0 = 120px from chart top -->
+    <!-- chart area: x 100..760 (660 wide), y 30..270 (240 tall) -->
+    <!-- 4 groups: bytecode_gc, lisp_gc, cek_gc, lisp_region -->
+    <!-- group spacing: 660/4 = 165, group center at x = 100 + 82.5, 247.5, 412.5, 577.5 -->
+    <!-- bar pair width: 80 (40+40), centered in group -->
+
+    <!-- baseline grid -->
+    <g stroke="#e5e2dd" stroke-width="1">
+      <line x1="100" y1="270" x2="760" y2="270"/>
+      <line x1="100" y1="210" x2="760" y2="210"/>
+      <line x1="100" y1="150" x2="760" y2="150"/>
+      <line x1="100" y1="90" x2="760" y2="90"/>
+      <line x1="100" y1="30" x2="760" y2="30"/>
+    </g>
+
+    <!-- baseline at 1.0× (the no-tax line) -->
+    <line x1="100" y1="150" x2="760" y2="150" stroke="#c14a3a" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <text x="765" y="154" font-family="ui-sans-serif" font-size="11" fill="#c14a3a" font-weight="600">1.0× baseline</text>
+
+    <!-- Y axis labels -->
+    <g font-family="ui-sans-serif" font-size="11" fill="#6b7280" text-anchor="end">
+      <text x="92" y="274">0</text>
+      <text x="92" y="214">0.5×</text>
+      <text x="92" y="154">1.0×</text>
+      <text x="92" y="94">1.5×</text>
+      <text x="92" y="34">2.0×</text>
+    </g>
+
+    <!-- bytecode_gc: native 1.08, wasm 1.05 -->
+    <!-- bar heights: 1.08 * 120 = 129.6, 1.05 * 120 = 126 -->
+    <rect x="142" y="140.4" width="34" height="129.6" fill="#4a6072" rx="2"/>
+    <rect x="180" y="144" width="34" height="126" fill="#2f7d4a" rx="2"/>
+    <text x="178" y="292" text-anchor="middle" font-family="ui-sans-serif" font-size="13" fill="#1a1a1a">bytecode_gc</text>
+    <text x="159" y="134" text-anchor="middle" font-family="ui-sans-serif" font-size="10" fill="#1a1a1a" font-variant-numeric="tabular-nums">1.08</text>
+    <text x="197" y="138" text-anchor="middle" font-family="ui-sans-serif" font-size="10" fill="#1a1a1a" font-variant-numeric="tabular-nums">1.05</text>
+
+    <!-- lisp_gc: native 1.24, wasm 1.34 -->
+    <rect x="307" y="121.2" width="34" height="148.8" fill="#4a6072" rx="2"/>
+    <rect x="345" y="109.2" width="34" height="160.8" fill="#2f7d4a" rx="2"/>
+    <text x="343" y="292" text-anchor="middle" font-family="ui-sans-serif" font-size="13" fill="#1a1a1a">lisp_gc</text>
+    <text x="324" y="115" text-anchor="middle" font-family="ui-sans-serif" font-size="10" fill="#1a1a1a" font-variant-numeric="tabular-nums">1.24</text>
+    <text x="362" y="103" text-anchor="middle" font-family="ui-sans-serif" font-size="10" fill="#1a1a1a" font-variant-numeric="tabular-nums">1.34</text>
+
+    <!-- cek_gc: native 1.28, wasm 1.83 -->
+    <rect x="472" y="116.4" width="34" height="153.6" fill="#4a6072" rx="2"/>
+    <rect x="510" y="50.4" width="34" height="219.6" fill="#2f7d4a" rx="2"/>
+    <text x="508" y="292" text-anchor="middle" font-family="ui-sans-serif" font-size="13" fill="#1a1a1a">cek_gc</text>
+    <text x="489" y="110" text-anchor="middle" font-family="ui-sans-serif" font-size="10" fill="#1a1a1a" font-variant-numeric="tabular-nums">1.28</text>
+    <text x="527" y="44" text-anchor="middle" font-family="ui-sans-serif" font-size="10" fill="#1a1a1a" font-variant-numeric="tabular-nums">1.83</text>
+
+    <!-- lisp_region: native 0.99, wasm 0.94 -->
+    <rect x="637" y="151.2" width="34" height="118.8" fill="#4a6072" rx="2"/>
+    <rect x="675" y="157.2" width="34" height="112.8" fill="#2f7d4a" rx="2"/>
+    <text x="673" y="292" text-anchor="middle" font-family="ui-sans-serif" font-size="13" fill="#1a1a1a">lisp_region</text>
+    <text x="654" y="145" text-anchor="middle" font-family="ui-sans-serif" font-size="10" fill="#1a1a1a" font-variant-numeric="tabular-nums">0.99</text>
+    <text x="692" y="151" text-anchor="middle" font-family="ui-sans-serif" font-size="10" fill="#1a1a1a" font-variant-numeric="tabular-nums">0.94</text>
+
+    <!-- legend -->
+    <g transform="translate(100, 320)" font-family="ui-sans-serif" font-size="12" fill="#1a1a1a">
+      <rect x="0" y="0" width="14" height="14" fill="#4a6072" rx="2"/>
+      <text x="20" y="11">native (Apple clang, ARM64)</text>
+      <rect x="220" y="0" width="14" height="14" fill="#2f7d4a" rx="2"/>
+      <text x="240" y="11">wasm (Node/V8)</text>
+    </g>
+  </svg>
+  <figcaption>GC tax = time of the GC engine divided by time of its no-GC sibling, averaged across the 5-benchmark suite. Values below 1.0× (lisp_region) mean the GC build is <em>faster</em> than the no-GC baseline &mdash; we'll come to that.</figcaption>
+</figure>
+
+<p>The three mark-sweep engines pay strikingly different prices, and the substrate matters: V8 amplifies the tax for some engines much more than for others. <code>bytecode_gc</code> pays almost nothing &mdash; the tax is a rounding error. <code>cek_gc</code> pays 1.83&times; on wasm, a 40% jump over its 1.28&times; native cost.</p>
+
+<h3>The mechanism: an optimization barrier per cons callsite</h3>
+
+<p>Adding the collector required splitting <code>cons()</code> into a fast bump path and an out-of-line slow path that handles free-list reuse and GC:</p>
+
+<pre><code class="language-c">static u32 cons_slow(u32 a, u32 d) {                  // out of line — has function calls
+  u32 i;
+  if (freelist != FREE_END) { i = freelist; freelist = cells[i].cdr; }
+  else {
+    if (gc_enabled) { gc_a = a; gc_b = d; gc(); }
+    if (freelist != FREE_END) { i = freelist; freelist = cells[i].cdr; }
+    else { g_oom = 1; return ERR; }
+  }
+  cells[i].car = a; cells[i].cdr = d; return mkcons(i);
+}
+
+static inline u32 cons(u32 a, u32 d) {
+  if (cell_top < MAX_CELLS) {                          // fast bump path
+    u32 i = cell_top++;
+    cells[i].car = a; cells[i].cdr = d;
+    return mkcons(i);
+  }
+  return cons_slow(a, d);                              // can reach gc() — that's the barrier
+}</code></pre>
+
+<p>At every cons callsite in the VM hot loop, the compiler now sees that the function <em>could</em> call <code>cons_slow</code> &mdash; which could mutate <code>cell_top</code>, write to the cells array, trigger garbage collection, modify the freelist, do anything. So the compiler has to preserve more state around every cons call. It pessimizes the surrounding hot loop.</p>
+
+<p>Crucially, <strong>this tax is paid per callsite regardless of whether the slow path actually runs.</strong> On a benchmark where the bump path always succeeds and <code>gc()</code> never fires, the tax is still there in the compiled code. We can fire zero collections during a benchmark and still pay 1.8&times;.</p>
+
+<p>How much pessimization happens depends on each engine's hot loop shape. <code>bytecode_gc</code>'s switch dispatch has many arms that never touch cons (<code>OP_LOADL</code>, <code>OP_JMP</code>, the inlined arithmetic) &mdash; V8 can keep specializing those arms tightly. <code>cek_gc</code>'s tight musttail chain is the case V8 specializes hardest, so it has the most to lose when forced to be conservative; it pays the highest amplification. <code>lisp_gc</code>'s one-big-recursive-function shape is in between &mdash; less specialization opportunity to begin with, so less to lose.</p>
+
+<h2><span class="section-num">5</span>The H2 zero floor: lifting an idea from tinylisp</h2>
+
+<p>If the tax is "per cons callsite reaching a function call," it should disappear when no function call is reachable from cons. Robert van Engelen's <a href="https://github.com/Robert-van-Engelen/tinylisp">tinylisp</a> &mdash; "Lisp in 99 lines of C" &mdash; demonstrates exactly this pattern.</p>
+
+<p>tinylisp's entire garbage collector is one line:</p>
+
+<pre><code class="language-c">void gc() { sp = ord(env); }</code></pre>
+
+<p>It works because tinylisp's cell heap is a stack growing <em>downward</em> (<code>cell[--sp]</code>) and the global env head is always at the lowest used index. Every <code>cons(a, b)</code> produces a cell with index lower than min(a, b), so the set of cells reachable through env is exactly <code>cell[sp..N]</code>. <code>gc()</code> resets <code>sp</code> to the env head's index. Anything below sp is unreachable; future allocations overwrite it. O(1), perfectly precise, no tracing.</p>
+
+<p>The catch is that this only works at boundaries where the only roots are the global env &mdash; in tinylisp, between top-level forms at the REPL prompt. It's not a general-purpose collector; closures created mid-eval that aren't bound to env can't survive past their creating top-level form. But for the wallisp benchmark suite, every program is one top-level form, so collection is never needed mid-bench. The cons hot path is what matters.</p>
+
+<p>So we ported it. <code>lisp_region.c</code>'s entire collector and its cons:</p>
+
+<pre><code class="language-c">// cons — pure local mutation. No function call, no fast/slow split.
+static u32 cons(u32 a, u32 d) {
+  if (sp == 0) { g_oom = 1; return ERR; }
+  sp--;
+  cells[sp].car = a;
+  cells[sp].cdr = d;
+  return mkcons(sp);
+}
+
+// gc — the entire collector. Drop everything above the live env chain head.
+static void gc(void) {
+  g_numgc++;
+  sp = considx(cdr(g_head));
+}</code></pre>
+
+<p>The cons here is <em>simpler</em> than <code>lisp.c</code>'s no-GC cons. There's no function call anywhere on either path; the compiler can treat cons as side-effect-free with respect to anything outside the cells array. Pre-registered prediction: <code>lisp_region / lisp_big &asymp; 1.0&times;</code> within noise.</p>
+
+<p>Measured: <strong>0.94&times; on wasm, 0.99&times; on native.</strong> Region-drop is consistently <em>faster</em> than the no-GC tree-walker baseline. We predicted equivalence and got a small improvement.</p>
+
+<figure>
+  <svg class="chart" viewBox="0 0 800 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The H2 zero floor — region-drop crosses below the no-GC baseline">
+    <!-- 3 horizontal bars, 0 to 1.5 range -->
+    <!-- bar area: x 180..750, scale 1.5 -> 570 px, so factor 380 -->
+    <!-- baseline at 1.0 = x 180 + 380 = 560 -->
+    <g font-family="ui-sans-serif" font-size="14">
+      <text x="170" y="50" text-anchor="end" fill="#1a1a1a">lisp_gc</text>
+      <rect x="180" y="36" width="509.2" height="24" fill="#4a6072" rx="2"/>
+      <text x="695" y="52" fill="#1a1a1a" font-variant-numeric="tabular-nums" font-size="13">1.34× (mark-sweep)</text>
+
+      <text x="170" y="100" text-anchor="end" fill="#1a1a1a">lisp</text>
+      <rect x="180" y="86" width="380" height="24" fill="#9ca3af" rx="2"/>
+      <text x="566" y="102" fill="#1a1a1a" font-variant-numeric="tabular-nums" font-size="13">1.00× (no GC, baseline)</text>
+
+      <text x="170" y="150" text-anchor="end" fill="#1a1a1a">lisp_region</text>
+      <rect x="180" y="136" width="357.2" height="24" fill="#2f7d4a" rx="2"/>
+      <text x="543" y="152" fill="#1a1a1a" font-variant-numeric="tabular-nums" font-size="13">0.94× (region-drop)</text>
+    </g>
+
+    <!-- baseline marker -->
+    <line x1="560" y1="20" x2="560" y2="180" stroke="#c14a3a" stroke-width="1.5" stroke-dasharray="3 3"/>
+
+    <!-- x axis -->
+    <line x1="180" y1="180" x2="750" y2="180" stroke="#c8c4be" stroke-width="1"/>
+    <g font-family="ui-sans-serif" font-size="11" fill="#6b7280">
+      <text x="180" y="198" text-anchor="middle">0</text>
+      <text x="306.7" y="198" text-anchor="middle">0.5×</text>
+      <text x="560" y="198" text-anchor="middle" font-weight="600" fill="#c14a3a">1.0×</text>
+      <text x="750" y="198" text-anchor="middle">1.5×</text>
+    </g>
+  </svg>
+  <figcaption>fib(24) wasm time relative to <code>lisp.c</code> (no GC). Region-drop crosses below the no-GC baseline by ~6%, sitting in a region we hadn't realized was achievable.</figcaption>
+</figure>
+
+<p>The sub-1.0&times; result was actually flagged in the falsification log as the case to watch for. It implies <strong>the no-GC <code>lisp.c</code> baseline itself was paying a small cons-shape tax we hadn't isolated.</strong></p>
+
+<p><code>lisp.c</code>'s cons does <code>if (cell_top &gt;= MAX_CELLS) return ERR; cells[cell_top++] = ...</code> &mdash; comparing a counter against a large constant. <code>lisp_region.c</code>'s cons does <code>if (sp == 0) ...; cells[--sp] = ...</code> &mdash; comparing against zero, which compiles to a single instruction (<code>i32.eqz</code> in wasm, <code>tbz</code> on ARM). The comparison is one wasm op shorter, the loop is one wasm op shorter, and on V8 that compounds into a measurable 6% over the benchmark.</p>
+
+<p>The H2 mechanism story sharpens: the "zero tax" pattern isn't "make cons match the no-GC baseline." It's "make cons the simplest possible mutation &mdash; no function call, comparison against zero, monotonic decrement &mdash; and the result lands <em>below</em> the no-GC baseline because even the baseline had headroom."</p>
+
+<h2><span class="section-num">6</span>Methodology: measure, don't guess</h2>
+
+<p>The project's working norm is "pre-register a prediction, then test it." Every hypothesis above was written down before the benchmark ran. The structure goes:</p>
+
+<ol>
+  <li><strong>State a hypothesis.</strong> E.g., "H4: GC widens bytecode's lead under a tight heap."</li>
+  <li><strong>Derive testable predictions.</strong> "<code>bytecode_gc / cek_gc</code> time ratio should be greater than <code>bytecode / cek</code> ratio."</li>
+  <li><strong>Specify falsification conditions.</strong> "If on any benchmark the ratio is below the no-GC ratio, that falsifies the prediction."</li>
+  <li><strong>Run the benchmark.</strong> Read the numbers.</li>
+  <li><strong>Update.</strong> If confirmed, the hypothesis stands. If refuted, write down which prediction broke and why &mdash; sometimes the mechanism story needs rephrasing, sometimes the whole hypothesis needs to die.</li>
+</ol>
+
+<p>A surprising fraction of "obviously correct" interpreter-design intuitions get falsified by this process. Things we believed, then measured, then deleted from the working model:</p>
+
+<ul>
+  <li><strong>The env-lookup hotspot.</strong> "Looking up variables in a cons-cell assoc-list is the bottleneck." We replaced it with an O(1) array. Speedup: about 5%. Not the bottleneck.</li>
+  <li><strong>The switch-dispatch win.</strong> "Computed gotos / direct-threaded dispatch will beat the switch by 20%." Measured: 5%, then <em>eaten</em> by <code>-Oz</code>. Not the bottleneck.</li>
+  <li><strong>CEK's tail-call advantage.</strong> "The tree-walker will blow the C stack on deep tail recursion." clang's <code>-O2</code> made it unbounded for free. (Section 2 above.)</li>
+  <li><strong>The GC tax is collection cost.</strong> "Most of the GC overhead is the mark/sweep work." Falsified: collection cost is negligible on benchmarks that fire 1&ndash;4 cycles. The dominant cost is the per-callsite optimization barrier &mdash; pessimization that's paid even when collection never runs. (Section 3 above.)</li>
+  <li><strong>GC tax scales with allocation rate.</strong> "More allocations means more amplification." Falsified backwards: allocation-heavy benchmarks (nrev) show the <em>least</em> amplification, because both sides are already cons-dominated. Compute-bound benchmarks show the most.</li>
+</ul>
+
+<p>The last two are the load-bearing ones; both came from H4. Each refutation required adding a new engine to the experiment (<code>cek_gc</code>, then <code>lisp_gc</code>, then <code>lisp_region</code>) to nail down the mechanism. The mechanism story now stands on four GC engines (three mark-sweep, one region-drop) and is sharper for it.</p>
+
+<h3>Why measurement-driven design matters more for interpreters</h3>
+
+<p>Interpreters live inside a compilation stack. Source C, clang's optimizer, wasm bytecode, V8's JIT &mdash; each layer transforms the code, and the layer above can erase or amplify what you did one layer down. Reasoning from the C source about runtime performance is reasoning across four substrates you don't see. Several of the surprises above involved one substrate "fixing" a problem at a different level than expected, or one substrate amplifying a cost at a different level than expected.</p>
+
+<p>The native-vs-wasm decomposition turned out to be load-bearing. The same C code, compiled native vs compiled to wasm and run on V8, exposes which substrate is responsible for which effect. <code>cek_gc</code> pays a 1.28&times; tax native and 1.83&times; tax wasm; the gap between those is V8's amplification of the per-callsite barrier on CEK's musttail chain. Without the native baseline, we couldn't have decomposed the cost into "compiler-level" and "JIT-level" parts.</p>
+
+<p>The workflow that emerged from this project:</p>
+
+<ul>
+  <li>Build a native binary of each engine for direct C measurement.</li>
+  <li>Run the same benchmark on wasm via Node/V8.</li>
+  <li>The ratio (wasm time) / (native time) is the substrate amplification factor.</li>
+  <li>The ratio (GC engine) / (no-GC engine) is the GC tax.</li>
+  <li>Decompose: tax has a native floor (compiler-level) and a wasm amplification (JIT-level). Both are real, neither is the whole story.</li>
+</ul>
+
+<p>That's the actual transferable result of this project, more than any single engine. Four substrates means four places for performance to come from or vanish into; you can only find out by measuring all four.</p>
+
+<h2>Closing &mdash; eight engines, four hypotheses, three falsifications</h2>
+
+<p>The full project ran four pre-registered hypothesis arcs:</p>
+
+<ul>
+  <li><strong>H1:</strong> CEK is needed for unbounded tail recursion. <em>Refuted.</em> clang TRE made the tree-walker unbounded for free. Later verified with <code>lisp_trampoline.c</code> (1.005&times; wasm vs <code>lisp.c</code>, 2 bytes apart in module size).</li>
+  <li><strong>H2:</strong> GC overhead is the cost of mark/sweep collection. <em>Refuted.</em> The dominant cost is the per-cons-callsite optimization barrier, paid even when collection never runs. Region-drop demonstrates the zero floor.</li>
+  <li><strong>H3:</strong> Mark cost vs sweep cost composes a particular way. <em>Not yet measured.</em></li>
+  <li><strong>H4:</strong> GC widens bytecode's speed lead. <em>Partially confirmed; mechanism refuted.</em> The widening is real (4 of 5 wasm benchmarks) but driven by H2's per-callsite barrier amplified by engine shape, not by collection frequency. Three GC engines together show V8's amplification scales with each engine's JIT-specializability: <code>bytecode_gc</code> ~1.0&times;, <code>lisp_gc</code> ~1.1&times;, <code>cek_gc</code> ~1.4&times;.</li>
+</ul>
+
+<p>Three deferred ideas remain in <code>docs/project_incoming/</code> &mdash; two of them filed during the tinylisp/mal external reading. The full record (predictions, measurements, falsification logs, reframings) lives in <code>FINDINGS.md</code>. Architecture and ISA in <code>DEV.md</code>. Engine comparison matrix in <code>ENGINES.md</code>. All in the repo root.</p>
+
+</div>
+
+<footer>
+  <p>wallisp is a measurement study, not a Lisp tutorial. For tutorials see <a href="https://github.com/Robert-van-Engelen/tinylisp">tinylisp</a> (the source of the region-drop trick) and <a href="https://github.com/kanaka/mal">mal</a> (the source of the explicit-trampoline framing).</p>
+  <p>Built with C, clang, wasm-ld, and a lot of pre-registered predictions. The full source, all benchmarks, and every commit's reasoning are in the repo.</p>
+</footer>
+
+</body>
+</html>

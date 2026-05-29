@@ -20,6 +20,9 @@ work without running `build.sh` first.
 
 ## Learn more
 
+- **[docs/index.html](docs/index.html)** — external write-up: the headline
+  findings with charts, code snippets, and the methodology, in a single
+  self-contained HTML page. The friendly entry point if you're just visiting.
 - **[ENGINES.md](ENGINES.md)** — side-by-side comparison of the eight engines:
   what each one is, what it costs, and what it taught us. Start here if you
   want the map.
