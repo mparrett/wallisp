@@ -99,6 +99,31 @@ wasm is actually *leaner*; V8 optimizes a call-containing hot loop less). Tools:
 
 ## Build & run details
 
+### macOS setup
+
+`build.sh` needs Homebrew's `clang` (with wasm32 target) and `wasm-ld`. Apple's
+`/usr/bin/clang` does **not** ship the wasm backend, and `wasm-ld` lives in the
+separate `lld` formula — not bundled with `llvm`.
+
+```bash
+brew install llvm lld
+```
+
+Both are **keg-only** on macOS (Apple's clang takes precedence), so prepend them
+to your PATH for the build:
+
+```bash
+export PATH="$(brew --prefix llvm)/bin:$(brew --prefix lld)/bin:$PATH"
+bash build.sh
+```
+
+If you only want to *run* (not rebuild), the prebuilt `*.wasm` files are checked
+in at the repo root — `node harness/test_bc.mjs` and `node harness/lisp-cli.mjs`
+work as-is with just `node`. `harness/bench.mjs` is the exception: it loads the
+`*_big.wasm` variants, which aren't prebuilt and require `build.sh`.
+
+### Compiler flags
+
 All engines: `--target=wasm32 -nostdlib -Wl,--no-entry -Wl,--export-dynamic
 -Wl,--allow-undefined -Wl,--initial-memory=33554432`. Extra per engine:
 - `cek.c` needs **`-mtail-call`** (uses `__attribute__((musttail))`).
