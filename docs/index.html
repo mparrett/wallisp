@@ -676,6 +676,47 @@ static void gc(void) {
 
 <p>That's the actual transferable result of this project, more than any single engine. Four substrates means four places for performance to come from or vanish into; you can only find out by measuring all four.</p>
 
+<h2><span class="section-num">7</span>The ceiling: hand-written JS and C</h2>
+
+<p>The methodology above describes a four-substrate ladder &mdash; C source, clang's optimizer, wasm, V8's JIT &mdash; and the workflow for decomposing performance across it. There's a natural follow-up: what would these algorithms cost with <em>no interpreter at all</em>? Hand-write the same five benchmarks in JavaScript and in C, run them on the same V8 and the same machine, and we get two reference points sitting above all eight engines &mdash; the upper bound on what these programs can cost on this hardware.</p>
+
+<p>The hand-written versions are in <code>baselines/bench.{js,c}</code>. Same algorithms shape-for-shape: <code>fib</code>/<code>tak</code>/<code>ack</code> stay recursive; <code>nrev+sum</code> uses cons-cell shaped linked lists (switching to arrays would change the asymptotic memory pattern and make the comparison dishonest); <code>tailsum</code> in JS is a while-loop because V8 has no proper TCE.</p>
+
+<p>Against <code>bytecode_gc</code> (the finalist engine) on the same hardware, best-of-25:</p>
+
+<figure>
+  <table>
+    <thead>
+      <tr><th>benchmark</th><th class="num">bytecode_gc</th><th class="num">js (V8)</th><th class="num">c (-O2)</th><th class="num">bc_gc / js</th><th class="num">bc_gc / c</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="engine">fib(24)</td><td class="num">7.31 ms</td><td class="num">0.33 ms</td><td class="num">0.13 ms</td><td class="num">22.2&times;</td><td class="num">57.1&times;</td></tr>
+      <tr><td class="engine">tak(18,12,6)</td><td class="num">3.56 ms</td><td class="num">0.15 ms</td><td class="num">0.05 ms</td><td class="num">23.8&times;</td><td class="num">71.1&times;</td></tr>
+      <tr><td class="engine">ack(3,4)</td><td class="num">0.57 ms</td><td class="num">0.05 ms</td><td class="num">0.02 ms</td><td class="num">11.5&times;</td><td class="num">28.3&times;</td></tr>
+      <tr><td class="engine">nrev+sum(150)</td><td class="num">0.87 ms</td><td class="num">0.09 ms</td><td class="num">0.15 ms</td><td class="num">9.7&times;</td><td class="num">6.0&times;</td></tr>
+      <tr><td class="engine">tailsum(30000)</td><td class="num">1.57 ms</td><td class="num">0.02 ms</td><td class="num">0.00 ms</td><td class="num">96.9&times;</td><td class="num">&infin;</td></tr>
+    </tbody>
+  </table>
+  <figcaption>Same five benchmarks, hand-written in JS and C, vs the finalist engine. Best-of-25 in all three columns. Run with <code>node harness/bench.mjs</code> after <code>bash build.sh --native</code>; ratios are stable across reruns, absolute ms varies ~10%.</figcaption>
+</figure>
+
+<p>Two surprises in the table.</p>
+
+<p><strong>JS beats C on <code>nrev+sum</code>.</strong> The only row where the gap from the interpreter to JS is wider than the gap to C. The reason is allocator shape: one iteration does about 11,000 cons allocations, each a short-lived three-word object. V8's young-generation bump allocator handles those at near-zero amortized cost; glibc's <code>malloc</code> pays book-keeping per call. This is a well-known V8 advantage and our benchmark hits it head-on. On the compute-only rows (no allocation), C wins over JS by the expected 2&ndash;3&times;.</p>
+
+<p><strong><code>tailsum(30000)</code> in C clocks at 0.000 ms.</strong> clang at <code>-O2</code> sees through the tail recursion and rewrites the algorithm as <code>n*(n+1)/2</code> &mdash; closed-form arithmetic. The reported "time" is below the timer's resolution because the work isn't being done at runtime; it was done at compile time. The Lisp engines obviously can't do this &mdash; the program isn't visible to clang. This is the deep reason an interpreter, however well-written, has a ceiling it can't reach: it can't see the whole program.</p>
+
+<p>So the full substrate ladder for fib(24) on this machine, fastest at the top:</p>
+
+<ul>
+  <li>C, <code>-O2</code> native &mdash; ~0.13 ms</li>
+  <li>JS-on-V8 (V8 JITs the source) &mdash; ~0.33 ms</li>
+  <li><code>bytecode_gc</code>, wasm-on-V8 (V8 JITs the interpreter, which interprets the program) &mdash; ~7.3 ms</li>
+  <li><code>cek_gc</code>, wasm-on-V8 (worst engine, same shape, no inlined prims) &mdash; ~57 ms</li>
+</ul>
+
+<p>The engine work in this project moves us from 57 ms to 7.3 ms &mdash; about 8&times;, on the interpreter side of a fixed substrate. From 7.3 ms to 0.13 ms is the remaining ~55&times;, and it lives in compiler/JIT territory we don't control. The headroom is real, and it's worth knowing where it actually sits.</p>
+
 <h2>Closing &mdash; eight engines, four hypotheses, three falsifications</h2>
 
 <p>The full project ran four pre-registered hypothesis arcs:</p>

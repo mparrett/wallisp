@@ -204,6 +204,57 @@ LLVM, V8 in Node 25 / JSC in Bun 1.3) — absolute ms shouldn't be compared
 across reruns. The native/wasm *ratios* within this run are the load-bearing
 result, since both were measured back-to-back on the same hardware.
 
+## Hand-written JS and C baselines — the substrate ladder, extended
+
+Natural follow-up to the native-vs-wasm decomposition: what would these
+algorithms cost with *no interpreter at all*? Hand-write the same five
+benchmarks in JS (V8 native, no wasm) and C (`-O2` native, no wasm), run on
+the same machine, and we get the upper bound on what these programs can cost.
+Live in `baselines/bench.{js,c}`; inline-equivalent versions print at the end
+of `node harness/bench.mjs`.
+
+Same algorithms shape-for-shape: cons-cell linked lists (not arrays) for
+`nrev+sum`; recursive `fib`/`tak`/`ack`; `tailsum` iterative in JS (no TCE),
+recursive in C (clang TCEs it).
+
+| benchmark      | bytecode_gc | js (V8) | c (-O2) | bc_gc / js | bc_gc / c |
+|----------------|-------------|---------|---------|------------|-----------|
+| fib(24)        | 7.31        | 0.33    | 0.13    | 22.2×      | 57.1×     |
+| tak(18,12,6)   | 3.56        | 0.15    | 0.05    | 23.8×      | 71.1×     |
+| ack(3,4)       | 0.57        | 0.05    | 0.02    | 11.5×      | 28.3×     |
+| nrev+sum(150)  | 0.87        | 0.09    | 0.15    |  9.7×      |  6.0×     |
+| tailsum(30000) | 1.57        | 0.02    | 0.00    | 96.9×      |  ∞ (folded)|
+
+Two findings worth surfacing:
+
+**1. JS beats C on `nrev+sum`.** The only row where the gap from the
+interpreter to JS is wider than the gap to C. Mechanism: one iteration does
+~11k cons allocations, each a short-lived three-word object; V8's young-gen
+bump allocator absorbs that at near-zero amortized cost, while glibc `malloc`
+pays book-keeping per call. On the compute-only rows (no allocation), C wins
+over JS by the expected 2–3×. This is a well-known V8 advantage and the
+benchmark hits it head-on; the C baseline could close the gap with an arena,
+which is precisely what the engines do internally.
+
+**2. `tailsum(30000)` in C clocks at 0.000 ms.** clang at `-O2` sees through
+the tail recursion and rewrites the loop as `n*(n+1)/2`. The reported time
+is below the timer's resolution because the work isn't being done at runtime;
+it was done at compile time. The Lisp engines obviously can't do this — the
+program isn't visible to clang. This is the structural reason an interpreter,
+however well-written, has a ceiling it can't reach: it can't see the whole
+program.
+
+**The substrate ladder for fib(24)**, fastest at the top:
+- C, `-O2` native — ~0.13 ms
+- JS-on-V8 (V8 JITs the source) — ~0.33 ms
+- `bytecode_gc`, wasm-on-V8 (V8 JITs the interpreter, which interprets the program) — ~7.3 ms
+- `cek_gc`, wasm-on-V8 (worst engine) — ~57 ms
+
+The engine work in this project moves us ~8× (cek_gc → bytecode_gc), on the
+interpreter side of a fixed substrate. The remaining ~55× to native C lives
+in compiler/JIT territory we don't control. Worth knowing where the headroom
+actually sits.
+
 ================================================================================
 MARK-SWEEP GC  (bytecode_gc.c)  — removing the shared ceiling
 ================================================================================

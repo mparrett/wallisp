@@ -18,6 +18,11 @@ node harness/lisp-cli.mjs -e "(begin (define fib (lambda (n) (if (< n 2) n (+ (f
 Prebuilt `*.wasm` modules are checked in at the repo root, so the harness and CLI
 work without running `build.sh` first.
 
+`harness/bench.mjs` also prints a **baselines** table: the same five
+benchmarks hand-written in JS (V8 native) and C (`-O2` native), no interpreter.
+The C row needs `bash build.sh --native` to produce `native_bench_baseline`;
+standalone equivalents live in `baselines/bench.{js,c}`.
+
 ## Learn more
 
 - **[docs/index.html](docs/index.html)** — external write-up: the headline

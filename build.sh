@@ -71,5 +71,11 @@ if [ "$WANT_NATIVE" = "1" ]; then
   mknat bytecode         bytecode
   mknat bytecode_gc      bytecode_gc
   echo "  -> native_bench_{lisp,lisp_trampoline,lisp_gc,lisp_region,cek,cek_gc,bytecode,bytecode_gc} + native_cli_*"
+
+  # Hand-written reference points: same five benchmarks in pure C, no engine.
+  # Sets the bottom-of-stack number — what -O2 native compute costs for these
+  # algorithms with no interpreter in the way.
+  clang -O2 -o native_bench_baseline baselines/bench.c
+  echo "  -> native_bench_baseline (hand-written C reference)"
 fi
 echo "done."

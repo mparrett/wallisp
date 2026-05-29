@@ -12,6 +12,7 @@
 // exhaust the arena on heavy benchmarks otherwise.
 
 import fs from 'fs';
+import { spawnSync } from 'child_process';
 
 const ENGINES = [
   ['tree-walker', 'lisp_big.wasm',             false],
@@ -122,6 +123,82 @@ const main = async () => {
   }
   console.log('\nshapes:');
   for (const [name, shape] of BENCHMARKS) console.log(`  ${name.padEnd(18)} ${shape}`);
+
+  printBaselines(engines.find(([n]) => n === 'bytecode_gc')[2]);
 };
+
+// Reference points: same algorithms hand-written in JS (V8 native, no
+// interpreter) and C (native, -O2). Standalone equivalents live in
+// baselines/bench.{js,c}; inlined here so `node harness/bench.mjs` produces
+// the full comparison in one pass.
+function jsBaselines() {
+  function fib(n) { return n < 2 ? n : fib(n-1) + fib(n-2); }
+  function tak(x,y,z) { return y < x ? tak(tak(x-1,y,z), tak(y-1,z,x), tak(z-1,x,y)) : z; }
+  function ack(m,n) { if (m===0) return n+1; if (n===0) return ack(m-1,1); return ack(m-1, ack(m,n-1)); }
+  const cons = (h,t) => ({h,t});
+  const iota = n => n===0 ? null : cons(n, iota(n-1));
+  const app  = (a,b) => a===null ? b : cons(a.h, app(a.t, b));
+  const nrev = l => l===null ? null : app(nrev(l.t), cons(l.h, null));
+  const lsum = l => l===null ? 0 : l.h + lsum(l.t);
+  // V8 has no TCE — iterative form matches the algorithm a JS programmer would write.
+  const tailsum = n => { let a = 0; while (n > 0) { a += n; n--; } return a; };
+  return [
+    () => fib(24),
+    () => tak(18,12,6),
+    () => ack(3,4),
+    () => lsum(nrev(iota(150))),
+    () => tailsum(30000),
+  ];
+}
+
+function bestOf(fn, reps = 25) {
+  let lo = Infinity, res;
+  for (let i = 0; i < reps; i++) {
+    const t = process.hrtime.bigint();
+    res = fn();
+    const d = Number(process.hrtime.bigint() - t) / 1e6;
+    if (d < lo) lo = d;
+  }
+  return { ms: lo, res };
+}
+
+function runCBaseline() {
+  // Spawn the prebuilt baseline binary if present; otherwise skip the C row.
+  const bin = new URL('../native_bench_baseline', import.meta.url).pathname;
+  if (!fs.existsSync(bin)) return null;
+  const out = spawnSync(bin, [], { encoding: 'utf8' });
+  if (out.status !== 0) return null;
+  // TSV: engine \t benchmark \t ms \t result
+  const map = new Map();
+  for (const line of out.stdout.split('\n').slice(1)) {
+    const [, name, ms, res] = line.split('\t');
+    if (name) map.set(name, { ms: parseFloat(ms), res });
+  }
+  return map;
+}
+
+function printBaselines(bcEngine) {
+  const fns = jsBaselines();
+  const w = 14;
+  console.log('\nbaselines (same algorithms, no interpreter):');
+  let header = 'benchmark'.padEnd(18) + 'bytecode_gc'.padStart(w) + 'js (V8)'.padStart(w) + 'c (-O2)'.padStart(w) + '   bc_gc / js     bc_gc / c';
+  console.log(header);
+  console.log('-'.repeat(header.length));
+  const cmap = runCBaseline();
+  for (let i = 0; i < BENCHMARKS.length; i++) {
+    const [name, , src] = BENCHMARKS[i];
+    const bc = bestOf(() => bcEngine.run(src));
+    const js = bestOf(fns[i]);
+    const c  = cmap ? cmap.get(name) : null;
+    let line = name.padEnd(18);
+    line += (bc.ms.toFixed(3) + 'ms').padStart(w);
+    line += (js.ms.toFixed(3) + 'ms').padStart(w);
+    line += (c ? (c.ms.toFixed(3) + 'ms').padStart(w) : 'n/a'.padStart(w));
+    line += ('   ' + (bc.ms / js.ms).toFixed(1) + 'x').padStart(15);
+    line += (c ? ('   ' + (c.ms > 0 ? (bc.ms / c.ms).toFixed(1) + 'x' : '∞')).padStart(15) : '   n/a'.padStart(15));
+    console.log(line);
+  }
+  if (!cmap) console.log('  (c baseline skipped: run `bash build.sh --native` to build native_bench_baseline)');
+}
 
 main().catch(e => { console.error(e); process.exit(1); });

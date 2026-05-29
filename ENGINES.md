@@ -129,3 +129,34 @@ wins 2.6×); GC strategy is a smaller secondary effect (0.94×-1.83× swing).
 If your priority is small + simple, `lisp.c` is 370 lines and runs everything
 the suite throws at it within the C stack and a 16M-cell arena;
 `lisp_region.c` adds 39 lines and gives you actual memory reclamation.
+
+## Where the ceiling is — hand-written JS and C baselines
+
+Two reference points sitting above the engine table: the same five benchmarks
+hand-written in JavaScript (V8 native, no interpreter) and in C (`-O2` native,
+no interpreter). Live in `baselines/bench.{js,c}` and run inline at the end of
+`node harness/bench.mjs` (the C row needs `bash build.sh --native` to produce
+`native_bench_baseline`).
+
+| benchmark      | bytecode_gc | js (V8) | c (-O2) | bc_gc / js | bc_gc / c |
+|----------------|-------------|---------|---------|------------|-----------|
+| fib(24)        | 7.31 ms     | 0.33 ms | 0.13 ms | 22.2×      | 57.1×     |
+| tak(18,12,6)   | 3.56 ms     | 0.15 ms | 0.05 ms | 23.8×      | 71.1×     |
+| ack(3,4)       | 0.57 ms     | 0.05 ms | 0.02 ms | 11.5×      | 28.3×     |
+| nrev+sum(150)  | 0.87 ms     | 0.09 ms | 0.15 ms |  9.7×      |  6.0×     |
+| tailsum(30000) | 1.57 ms     | 0.02 ms | 0.00 ms | 96.9×      |  ∞ (folded) |
+
+Two findings:
+
+- **JS beats C on `nrev+sum`.** V8's young-gen bump allocator handles 11k
+  short-lived cons cells per iteration faster than glibc `malloc`. The only
+  benchmark where the interpreter-to-JS gap is wider than the interpreter-to-C
+  gap. On the compute-only rows, C wins over JS by the expected 2–3×.
+- **`tailsum(30000)` in C folds to closed-form.** clang at `-O2` rewrites the
+  tail recursion as `n*(n+1)/2`. The interpreters can't see the whole program;
+  this is the structural reason there's a ceiling no interpreter can reach.
+
+The engine work in this project closes the gap between `cek_gc` (worst, ~57ms
+fib) and `bytecode_gc` (finalist, ~7.3ms) — about 8×, on the interpreter side
+of a fixed substrate. The remaining ~55× to native C lives in
+compiler/JIT territory.
