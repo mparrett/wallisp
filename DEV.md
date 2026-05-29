@@ -139,6 +139,19 @@ output length, read the result string at `output_ptr()`. `bytecode_gc.wasm` also
 exports `gc_count()`; the `bc_base/inline/super` builds export `icount()`
 (instructions dispatched). `harness/lisp-cli.mjs` is a minimal driver.
 
+### JS runtimes
+
+Verified: **Node** (V8) and **Bun** (JavaScriptCore) — both run the harnesses
+unchanged, and their `bench.mjs` ratios agree within ~5% across two independent
+JIT engines (real cross-validation of "trust ratios, not magnitudes").
+
+**Deno** needs porting and is currently a poor fit for `bench.mjs` regardless:
+the bare-global ergonomics differ (Node-style `'fs'`/`'path'`/`'url'` need
+`node:` prefixes; `process`/`Buffer` need explicit imports), and — the
+blocker — Deno's `process.hrtime.bigint()` compat shim is too coarse to time
+sub-ms benchmarks, producing `0ms` entries and `NaNx`/`Infinityx` ratios. A
+real Deno port would need `performance.now()` in the bench path.
+
 ## Open threads / next steps
 
 1. **Superinstructions into the GC build** — same edit on `bytecode_gc.c`. The
