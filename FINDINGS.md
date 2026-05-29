@@ -53,14 +53,14 @@ real constant-factor win, not noise. CEK is ~2.2x *slower* than the tree-walker
 
 | case                     | tree-walker      | CEK            | bytecode              |
 |--------------------------|------------------|----------------|-----------------------|
-| deep tail recursion      | ✓ (`-O2` TRE)    | ✓ (tail calls) | ✓ if `CALL_MAX` big†  |
-| deep non-tail recursion  | ✗ C-stack ~10k   | ✓ (arena)      | ✓ if `CALL_MAX` big   |
+| deep tail recursion      | ✓ (`-O2` TRE)    | ✓ (tail calls) | ✓ (`OP_TAILCALL`)†    |
+| deep non-tail recursion  | ✗ C-stack ~10k   | ✓ (arena)      | ✗ `CALL_MAX` bounded  |
 | long loops, no GC        | best             | worst‡         | middle                |
 
-† bytecode has **no tail-call optimization**: every `OP_CALL` pushes a return
-  frame, so even tail recursion consumes `CALL_MAX` slots. Adding an
-  `OP_TAILCALL` (reuse the current frame in tail position) would fix this and is
-  the obvious next step if deep tail loops matter.
+† Original chart said bytecode lacked TCO; we have since added `OP_TAILCALL`
+  (reuses the current call frame in tail position), so tail recursion no longer
+  consumes `CALL_MAX` slots. See "OP_TAILCALL: proper tail calls in the bytecode
+  VM" below for the measurement.
 ‡ CEK allocates the most garbage per step, so it exhausts the arena first.
 
 ## Takeaways
@@ -151,8 +151,10 @@ correct semantics. Trivially reverted if raw throughput is the only goal.
   a single-workload artifact — but all five are small numeric/list kernels. A
   very different workload (string-heavy, large data, IO) isn't represented
   because the language has no such features.
-- All three still lack a garbage collector — the shared ceiling. The bytecode
-  VM merely hits it later on `fib` by allocating less.
+- *At the time of this measurement*, all three engines lacked a garbage
+  collector — the shared ceiling, which the bytecode VM merely hit later by
+  allocating less. Since then we've added `lisp_gc`, `lisp_region`, `cek_gc`,
+  and `bytecode_gc`; the GC measurements are in the H4 / H2 sections below.
 - Numbers are V8-on-wasm. A standalone runtime (wasmtime, wasm3) would differ.
 
 ## Native build — separating engine cost from substrate cost

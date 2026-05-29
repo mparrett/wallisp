@@ -47,6 +47,24 @@ mkbig engines/cek.c             cek_big.wasm      "-mtail-call"
 mkbig engines/bytecode.c        bytecode_big.wasm
 echo "  -> lisp_big.wasm lisp_trampoline_big.wasm lisp_region_big.wasm cek_big.wasm bytecode_big.wasm"
 
+# Headline property: every wasm module is freestanding (zero imports). We link
+# with --allow-undefined for build flexibility, so the only thing keeping the
+# property true is "clang never synthesized a libc call." Assert it explicitly
+# so silent drift (a new strlen/memset from a future clang) breaks the build
+# instead of breaking the harness at instantiation time.
+echo "asserting zero imports on every wasm module:"
+node -e '
+const fs = require("fs");
+const mods = fs.readdirSync(".").filter(f => f.endsWith(".wasm"));
+let bad = 0;
+for (const f of mods) {
+  const imps = WebAssembly.Module.imports(new WebAssembly.Module(fs.readFileSync(f)));
+  if (imps.length) { console.error(`  ✗ ${f}: ${imps.length} imports: ${JSON.stringify(imps)}`); bad++; }
+}
+if (bad) { console.error(`${bad}/${mods.length} modules have imports — freestanding property broken.`); process.exit(1); }
+console.log(`  ✓ ${mods.length}/${mods.length} modules import zero symbols`);
+'
+
 if [ "$WANT_NATIVE" = "1" ]; then
   echo "native binaries (no wasm, no JIT — direct C measurement):"
   NFLAGS="-O2 -I. -Wno-unknown-attributes -Wno-ignored-attributes -Wno-macro-redefined"
