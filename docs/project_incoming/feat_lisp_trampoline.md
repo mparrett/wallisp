@@ -1,10 +1,28 @@
 ---
-status: open
-assigned: unassigned
+status: done
+assigned: claude-code
 created: 2026-05-29
 updated: 2026-05-29
+shipped: 2026-05-29
+shipped_in: engines/lisp_trampoline.c, FINDINGS.md "H1 verification — explicit trampoline tree-walker"
 ---
 # Feature: explicit-trampoline tree-walker (`lisp_trampoline.c`)
+
+## Outcome (2026-05-29)
+
+Shipped. All three pre-registered predictions CONFIRMED within noise:
+  (a) lisp_trampoline / lisp ≈ 1.0× both substrates → measured 1.005×
+      wasm, 1.007× native; all individual benchmarks within ±2%.
+  (b) countdown(1M) returns done → confirmed in 16M-cell big variant.
+      Mutual (even? 1M) also confirmed.
+  (c) Wasm modules within 1% of each other → 9840 vs 9838 bytes
+      (0.02% difference; 2 bytes).
+
+H1's "clang TRE = mal step 5 trampoline" framing is now empirically
+grounded. See FINDINGS.md "H1 verification — explicit trampoline
+tree-walker" for the writeup.
+
+---
 
 ## Summary
 

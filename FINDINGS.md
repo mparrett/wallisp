@@ -273,6 +273,18 @@ H2 zero floor ................................... MEASURED via region-drop GC.
     can't reach any function call — and a small additional speedup comes
     from the lighter compare shape (sp == 0 vs cell_top >= MAX_CELLS).
     See "H2 zero floor — region-drop GC" below.
+
+H1 verification ................................. CONFIRMED via explicit trampoline.
+    lisp_trampoline.c rewrites eval() as a hand-rolled while(TRUE) loop
+    (mal step 5 verbatim) instead of relying on clang's -O2 TRE to do the
+    same. Pre-registered ≈1.0× both substrates within ±5%; measured
+    native mean 1.007×, wasm mean 1.005×, all individual benchmarks
+    within ±2%. Wasm modules differ by 2 bytes out of 9840 (0.02%).
+    The recursive lisp.c form pays no hidden cost vs the explicit
+    trampoline — clang's TRE is doing exactly the transformation mal
+    step 5 prescribes. H1's "clang TRE = mal step 5 trampoline" framing
+    is now empirically grounded. See "H1 verification — explicit
+    trampoline tree-walker" below.
     Does GC widen the bytecode VM's lead under a tight heap (it allocates less,
     so it should collect less often)? With `cek_gc.c` ported, the testable
     predictions (recorded BEFORE running the bench) are:
@@ -819,3 +831,104 @@ The H2 zero floor exists; it's just not for every workload.
   on wasm and ~0.99× on native. Reframed: the no-GC baseline itself
   was paying a small tax we hadn't isolated.
 - (b) and (c): confirmed.
+
+## H1 verification — explicit trampoline tree-walker (`lisp_trampoline.c`)
+
+H1 found that the recursive `eval()` in `lisp.c` runs unbounded
+tail recursion in flat C stack because `clang -O2` performs TRE on
+`return eval(...)` self-calls. mal step 5 prescribes the *explicit*
+version of the same transformation — `while(TRUE)` loop around eval,
+`ast` and `env` rebound on tail branches, `continue` instead of
+recursing. This engine writes that loop by hand. The two should
+produce nearly-identical machine code; if they don't, H1's framing
+needs a more nuanced phrasing.
+
+### Pre-registered prediction (BEFORE running the bench)
+
+  (a) `lisp_trampoline / lisp` ≈ **1.0× both substrates**, within
+      noise (call it ±5%). clang's -O2 TRE produces the same loop
+      the trampoline writes explicitly; the inputs to the optimizer
+      and the codegen target are the same.
+  (b) `lisp_trampoline` passes `countdown(1,000,000)` — same H1
+      property as `lisp.c`, just made explicit instead of relying
+      on -O2.
+  (c) wasm module sizes within 1% of each other. A larger gap
+      suggests clang's TRE produced different code shape from the
+      hand-rolled loop.
+
+Falsification:
+- (a) deviating significantly (>5%) means clang's -O2 was doing
+  *more than just TRE* on `lisp.c` (or *less*), and H1's "clang TRE =
+  mal step 5 trampoline" framing needs revision.
+- (b) failing — should be impossible if (a) holds.
+- (c) deviating significantly is a softer falsification, showing
+  codegen differs even if perf doesn't.
+
+### Measured (best-of-25, both arenas at 16M cells)
+
+**Native (Apple clang, ARM64):**
+
+| benchmark      | lisp   | lisp_trampoline | ratio (tramp/lisp) |
+|----------------|--------|-----------------|--------------------|
+| fib(24)        | 10.918 | 11.013          | 1.009×             |
+| tak(18,12,6)   |  4.767 |  4.691          | 0.984×             |
+| ack(3,4)       |  0.969 |  0.977          | 1.008×             |
+| nrev+sum(150)  |  1.705 |  1.736          | 1.018×             |
+| tailsum(30000) |  2.691 |  2.732          | 1.015×             |
+
+Mean: 1.007×.
+
+**Wasm (Node/V8):**
+
+| benchmark      | TW     | TW_tramp | ratio (tramp/TW) |
+|----------------|--------|----------|------------------|
+| fib(24)        | 13.301 | 13.502   | 1.015×           |
+| tak(18,12,6)   |  6.127 |  6.148   | 1.003×           |
+| ack(3,4)       |  1.224 |  1.230   | 1.005×           |
+| nrev+sum(150)  |  2.203 |  2.209   | 1.003×           |
+| tailsum(30000) |  3.503 |  3.503   | 1.000×           |
+
+Mean: 1.005×.
+
+**Wasm module sizes:** `lisp.wasm` = 9840 bytes, `lisp_trampoline.wasm` = 9838 bytes
+(0.02% difference, 2 bytes out of 9840).
+
+### Result against the predictions
+
+(a) `lisp_trampoline / lisp` ≈ 1.0× both substrates within ±5%.
+    **CONFIRMED.** Native mean 1.007×, wasm mean 1.005×. Every individual
+    benchmark lands within ±2% on both substrates. The variance is
+    indistinguishable from run-to-run noise.
+
+(b) `countdown(1,000,000)` returns `done`. **CONFIRMED** in the 16M-cell
+    big variant on both substrates. (Default 131K-cell arena OOMs the same
+    way `lisp.c` does — neither has GC, so per-iteration cons allocations
+    accumulate. The trampoline doesn't fix arena exhaustion; it preserves
+    the flat-C-stack property, which is what H1 was about.) Mutual tail
+    recursion `(even? 1000000)` → `t` also works.
+
+(c) Wasm modules within 1% of each other. **CONFIRMED, dramatically.**
+    The two `.wasm` modules differ by 2 bytes out of 9840 (0.02%). The
+    structural and recursive forms compile to essentially the same code.
+
+### Verdict on H1's "clang TRE = mal step 5 trampoline" framing
+
+Empirically grounded. The two engines do the same work, run at the same
+speed, and produce wasm modules within 0.02% of each other. clang's -O2
+TRE is performing exactly the transformation mal step 5 prescribes by
+hand — turning `return eval(...)` self-calls into `ast = ...; env = ...;
+continue;`. The recursive eval form is not paying any hidden cost
+relative to the explicit trampoline; the compiler hides nothing.
+
+This refines H1's "Sharper restatement" (line 39): it's no longer just a
+framing claim; it's a measured equivalence. The recursive lisp.c form is
+a perfectly fine way to write a flat-C-stack tree-walker on any C
+compiler with TRE — and modern clang has TRE. Compilers without TRE
+would need the explicit trampoline; for us, the two are interchangeable.
+
+### Falsification log
+
+- All three pre-registered predictions confirmed within noise.
+- No new findings, no surprises. This is a null result by design — the
+  experiment was set up to verify a framing claim, not to find anything
+  new. The clean confirmation IS the result.

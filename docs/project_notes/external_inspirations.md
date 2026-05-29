@@ -67,9 +67,14 @@ Two framings we picked up from reading the guide:
    refuted the original hypotheses."
 
    Worth measuring directly: does an explicit-trampoline tree-walker
-   (`lisp_trampoline.c`) match the recursive `lisp.c` under -O2? The
-   experiment is filed as:
-   - `docs/project_incoming/feat_lisp_trampoline.md`
+   (`lisp_trampoline.c`) match the recursive `lisp.c` under -O2?
+
+   **Outcome (shipped 2026-05-29):** YES, within noise. Native mean
+   1.007×, wasm mean 1.005×, wasm modules differ by 2 bytes out of
+   9840. clang's -O2 TRE is doing exactly the transformation mal step
+   5 prescribes. See FINDINGS.md "H1 verification — explicit trampoline
+   tree-walker" and the ticket below.
+   - `docs/project_incoming/feat_lisp_trampoline.md` (status: done)
 
 2. **The "deferrable" pattern as hypothesis-progression.** mal's guide
    marks features as deferrable until later steps make them necessary.

@@ -19,14 +19,15 @@ FLAGS="--target=wasm32 -nostdlib -fno-builtin -Wl,--no-entry -Wl,--export-dynami
 MEM="-Wl,--initial-memory=33554432"      # 32 MB — fits the default 131072 / 262144-cell arenas
 
 echo "engines (default arenas):"
-clang $FLAGS $MEM -O2              -o lisp.wasm         engines/lisp.c
-clang $FLAGS $MEM -O2              -o lisp_gc.wasm      engines/lisp_gc.c      # tree-walker + mark-sweep GC (H4)
-clang $FLAGS $MEM -O2              -o lisp_region.wasm  engines/lisp_region.c  # tree-walker + region-drop GC (H2 zero floor)
+clang $FLAGS $MEM -O2              -o lisp.wasm             engines/lisp.c
+clang $FLAGS $MEM -O2              -o lisp_trampoline.wasm  engines/lisp_trampoline.c  # explicit while(TRUE) trampoline (H1 verification)
+clang $FLAGS $MEM -O2              -o lisp_gc.wasm          engines/lisp_gc.c          # tree-walker + mark-sweep GC (H4)
+clang $FLAGS $MEM -O2              -o lisp_region.wasm      engines/lisp_region.c      # tree-walker + region-drop GC (H2 zero floor)
 clang $FLAGS $MEM -O2 -mtail-call  -o cek.wasm          engines/cek.c          # CEK uses wasm tail calls
 clang $FLAGS $MEM -O2 -mtail-call  -o cek_gc.wasm       engines/cek_gc.c       # CEK + mark-sweep GC (H4)
 clang $FLAGS $MEM -O2              -o bytecode.wasm     engines/bytecode.c
 clang $FLAGS $MEM -O2              -o bytecode_gc.wasm  engines/bytecode_gc.c  # GC build ships its own memset
-echo "  -> lisp.wasm lisp_gc.wasm lisp_region.wasm cek.wasm cek_gc.wasm bytecode.wasm bytecode_gc.wasm"
+echo "  -> lisp.wasm lisp_trampoline.wasm lisp_gc.wasm lisp_region.wasm cek.wasm cek_gc.wasm bytecode.wasm bytecode_gc.wasm"
 
 echo "prototype line (no TCO / no GC — the optimization ladder):"
 clang $FLAGS $MEM -O2 -o bc_base.wasm   prototype/bc_base.c     # + instruction counter
@@ -39,11 +40,12 @@ echo "  -> bc_base.wasm bc_inline.wasm bc_super.wasm"
 echo "bench variants (16M-cell arenas):"
 BIGMEM="-Wl,--initial-memory=268435456"   # 256 MB (CEK allocates most; large arenas keep all 3 engines comparable)
 mkbig () { sed 's/define MAX_CELLS.*/define MAX_CELLS 16000000/' "$1" > /tmp/_big.c; clang $FLAGS $BIGMEM $3 -O2 -o "$2" /tmp/_big.c; }
-mkbig engines/lisp.c        lisp_big.wasm
-mkbig engines/lisp_region.c lisp_region_big.wasm     # for direct A/B vs lisp_big at matching arena
-mkbig engines/cek.c         cek_big.wasm      "-mtail-call"
-mkbig engines/bytecode.c    bytecode_big.wasm
-echo "  -> lisp_big.wasm lisp_region_big.wasm cek_big.wasm bytecode_big.wasm"
+mkbig engines/lisp.c            lisp_big.wasm
+mkbig engines/lisp_trampoline.c lisp_trampoline_big.wasm  # for direct A/B vs lisp_big at matching arena
+mkbig engines/lisp_region.c     lisp_region_big.wasm
+mkbig engines/cek.c             cek_big.wasm      "-mtail-call"
+mkbig engines/bytecode.c        bytecode_big.wasm
+echo "  -> lisp_big.wasm lisp_trampoline_big.wasm lisp_region_big.wasm cek_big.wasm bytecode_big.wasm"
 
 if [ "$WANT_NATIVE" = "1" ]; then
   echo "native binaries (no wasm, no JIT — direct C measurement):"
@@ -60,13 +62,14 @@ if [ "$WANT_NATIVE" = "1" ]; then
           -o native_cli_$1 native/main.c
   }
   # -mtail-call is wasm-only; native musttail works on ARM64/x86 without it.
-  mknat lisp         lisp
-  mknat lisp_gc      lisp_gc
-  mknat lisp_region  lisp_region
-  mknat cek          cek
-  mknat cek_gc       cek_gc
-  mknat bytecode     bytecode
-  mknat bytecode_gc  bytecode_gc
-  echo "  -> native_bench_{lisp,lisp_gc,lisp_region,cek,cek_gc,bytecode,bytecode_gc} + native_cli_*"
+  mknat lisp             lisp
+  mknat lisp_trampoline  lisp_trampoline
+  mknat lisp_gc          lisp_gc
+  mknat lisp_region      lisp_region
+  mknat cek              cek
+  mknat cek_gc           cek_gc
+  mknat bytecode         bytecode
+  mknat bytecode_gc      bytecode_gc
+  echo "  -> native_bench_{lisp,lisp_trampoline,lisp_gc,lisp_region,cek,cek_gc,bytecode,bytecode_gc} + native_cli_*"
 fi
 echo "done."

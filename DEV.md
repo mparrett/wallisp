@@ -27,6 +27,7 @@ For build/run, see [README.md](README.md). For the empirical record, see
 | `lisp.c` | tree-walker (recursive eval over the cons-tree) | baseline, 1.0× |
 | `cek.c` | CEK machine (explicit Control/Env/Kont, wasm tail calls) | **2.2× slower** — clang already tail-eliminates the tree-walker's self-recursion, so CEK paid for heap continuations and got nothing back |
 | `lisp_gc.c` | tree-walker + mark-sweep GC (H4 substrate, shadow-stack root protocol) | TRE preserved — `countdown(1e6)` runs flat with 26 GC cycles |
+| `lisp_trampoline.c` | tree-walker with explicit `while(TRUE)` trampoline (mal step 5) | 1.005× wasm, 1.007× native vs `lisp.c` — H1 framing verified |
 | `lisp_region.c` | tree-walker + region-drop GC (H2 zero floor; lifted from tinylisp) | ~6% FASTER than `lisp` on wasm — refuted prediction in the interesting direction |
 | `cek_gc.c` | CEK + mark-sweep GC (H4 substrate) | same machine as `cek.c`; isolates the GC tax mechanism in a second engine |
 | `bytecode.c` | compile-once to a flat u32 ISA, stack VM, in-VM TCO (`OP_TAILCALL`) | **2.3–3.9× faster — winner** |
@@ -196,7 +197,7 @@ build.sh                 build all engines -> *.wasm (pass --native for native b
 FINDINGS.md              full empirical record (engine benchmarks + GC hypotheses)
 *.wasm                   prebuilt engines (run immediately without clang)
 engines/                 the engines (see engines/README.md)
-  lisp.c lisp_gc.c lisp_region.c cek.c cek_gc.c bytecode.c bytecode_gc.c
+  lisp.c lisp_trampoline.c lisp_gc.c lisp_region.c cek.c cek_gc.c bytecode.c bytecode_gc.c
 prototype/               bytecode optimization ladder (see prototype/README.md)
   bc_orig.c bc_base.c bc_inline.c bc_super.c
 wat/                     hand-editable WAT experiments

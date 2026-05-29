@@ -13,6 +13,7 @@ See [`../DEV.md`](../DEV.md) for the architectural tour and
 | 5     | `cek_gc.c`        | CEK + mark-sweep GC (H4 substrate)    | engine-shape study       |
 | 6     | `lisp_gc.c`       | tree-walker + GC (shadow-stack roots) | TRE-preserving GC port   |
 | 7     | `lisp_region.c`   | tree-walker + region-drop GC          | H2 zero floor (~0.94× wasm)|
+| 8     | `lisp_trampoline.c` | tree-walker, explicit `while(TRUE)` (mal step 5) | H1 verification (~1.005× wasm) |
 
 All four share the same reader, printer, arena, primitives, and `eval_source`
 wasm ABI. Only the evaluator differs — that's what makes the A/B honest.

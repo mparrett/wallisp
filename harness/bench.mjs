@@ -14,13 +14,14 @@
 import fs from 'fs';
 
 const ENGINES = [
-  ['tree-walker', 'lisp_big.wasm',         false],
-  ['TW_region',   'lisp_region_big.wasm',  true],   // region-drop GC (H2 zero floor)
-  ['TW_gc',       'lisp_gc.wasm',          true],   // mark-sweep GC (H4)
-  ['CEK',         'cek_big.wasm',          false],
-  ['CEK_gc',      'cek_gc.wasm',           true],
-  ['bytecode',    'bytecode_big.wasm',     false],
-  ['bytecode_gc', 'bytecode_gc.wasm',      true],
+  ['tree-walker', 'lisp_big.wasm',             false],
+  ['TW_tramp',    'lisp_trampoline_big.wasm',  false],  // explicit while(TRUE) (H1)
+  ['TW_region',   'lisp_region_big.wasm',      true],   // region-drop GC (H2 zero floor)
+  ['TW_gc',       'lisp_gc.wasm',              true],   // mark-sweep GC (H4)
+  ['CEK',         'cek_big.wasm',              false],
+  ['CEK_gc',      'cek_gc.wasm',               true],
+  ['bytecode',    'bytecode_big.wasm',         false],
+  ['bytecode_gc', 'bytecode_gc.wasm',          true],
 ];
 
 // Each: [name, shape-it-stresses, lisp-source]
