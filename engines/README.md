@@ -1,8 +1,9 @@
 # Engines
 
 From-scratch implementations of the same tiny Lisp, built in this order.
-See [`../DEV.md`](../DEV.md) for the architectural tour and
-[`../FINDINGS.md`](../FINDINGS.md) for measurements.
+For the side-by-side comparison (grid, capabilities, what each one taught us)
+see [`../ENGINES.md`](../ENGINES.md). For the architectural tour see
+[`../DEV.md`](../DEV.md); for measurements [`../FINDINGS.md`](../FINDINGS.md).
 
 | order | file              | architecture                          | verdict                  |
 |-------|-------------------|---------------------------------------|--------------------------|

@@ -22,16 +22,17 @@ For build/run, see [README.md](README.md). For the empirical record, see
 
 ## The engines — `engines/`
 
-| file | architecture | verdict |
-|---|---|---|
-| `lisp.c` | tree-walker (recursive eval over the cons-tree) | baseline, 1.0× |
-| `cek.c` | CEK machine (explicit Control/Env/Kont, wasm tail calls) | **2.2× slower** — clang already tail-eliminates the tree-walker's self-recursion, so CEK paid for heap continuations and got nothing back |
-| `lisp_gc.c` | tree-walker + mark-sweep GC (H4 substrate, shadow-stack root protocol) | TRE preserved — `countdown(1e6)` runs flat with 26 GC cycles |
-| `lisp_trampoline.c` | tree-walker with explicit `while(TRUE)` trampoline (mal step 5) | 1.005× wasm, 1.007× native vs `lisp.c` — H1 framing verified |
-| `lisp_region.c` | tree-walker + region-drop GC (H2 zero floor; lifted from tinylisp) | ~6% FASTER than `lisp` on wasm — refuted prediction in the interesting direction |
-| `cek_gc.c` | CEK + mark-sweep GC (H4 substrate) | same machine as `cek.c`; isolates the GC tax mechanism in a second engine |
-| `bytecode.c` | compile-once to a flat u32 ISA, stack VM, in-VM TCO (`OP_TAILCALL`) | **2.3–3.9× faster — winner** |
-| `bytecode_gc.c` | bytecode VM + mark-sweep GC (**the finalist**) | unbounded recursion in fixed memory |
+The side-by-side comparison lives in [`ENGINES.md`](ENGINES.md): grid of
+what was built vs not, engines-at-a-glance table (lines/arena/fib(24) on
+both substrates), capabilities by architecture, and one paragraph per
+engine on what it taught us. Read that first.
+
+The short version: three architectures (`lisp` tree-walker, `cek` machine,
+`bytecode` VM), three GC strategies (none, mark-sweep, region-drop), eight
+engines total (two grid cells empty by design — see ENGINES.md). Bytecode
+is 2.3-3.9× faster than tree-walker by attacking the axis the substrate JIT
+doesn't already cover; CEK pays a 2.2× speed penalty for a capability
+(deep non-tail recursion) it exclusively owns.
 
 Bytecode's biggest win (3.9×) is on allocation-heavy list reversal, smallest
 (2.3×) on call-bound `tak`. Full numbers in `FINDINGS.md`.

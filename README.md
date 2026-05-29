@@ -1,8 +1,10 @@
 # wallisp — tiny Lisp → WebAssembly
 
-A small Lisp implemented three ways (tree-walker, CEK machine, bytecode VM),
-compiled to freestanding `wasm32` with **zero imports**, then driven by
-measurement to a finalist: a bytecode VM with TCO and a hand-rolled mark-sweep GC.
+A small Lisp implemented eight ways across three architectures (tree-walker,
+CEK machine, bytecode VM) and three GC strategies (none, mark-sweep,
+region-drop), compiled to freestanding `wasm32` with **zero imports**, then
+driven by measurement to a finalist: a bytecode VM with TCO and a
+hand-rolled mark-sweep GC.
 
 ## Quick start
 
@@ -18,10 +20,13 @@ work without running `build.sh` first.
 
 ## Learn more
 
-- **[DEV.md](DEV.md)** — architectural tour: the language, the three engines, the
-  bytecode ISA, the GC, the optimization ladder, the hand-editable WAT track, and
-  open threads.
-- **[FINDINGS.md](FINDINGS.md)** — the empirical record: benchmark tables, the
-  five pre-registered GC hypotheses, and surprises that refuted armchair guesses.
+- **[ENGINES.md](ENGINES.md)** — side-by-side comparison of the eight engines:
+  what each one is, what it costs, and what it taught us. Start here if you
+  want the map.
+- **[DEV.md](DEV.md)** — architectural tour: the language, the engines, the
+  bytecode ISA, the GC, the optimization ladder, the hand-editable WAT track,
+  and open threads.
+- **[FINDINGS.md](FINDINGS.md)** — the empirical record: benchmark tables,
+  pre-registered hypotheses, and surprises that refuted armchair guesses.
 - **[CLAUDE.md](CLAUDE.md)** — instructions for Claude Code agents working in
   this repo.

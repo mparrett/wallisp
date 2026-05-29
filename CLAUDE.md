@@ -1,6 +1,7 @@
 # wallisp — agent instructions
 
 Repo tour: `DEV.md` (architecture, ISA, file map, open threads).
+Engine comparison: `ENGINES.md` (8-engine matrix, capabilities, tradeoffs).
 Empirical record: `FINDINGS.md` (benchmark tables, hypotheses).
 Read these on demand — they're large; don't load by default.
 
