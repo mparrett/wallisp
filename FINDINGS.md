@@ -36,6 +36,13 @@ real constant-factor win, not noise. CEK is ~2.2x *slower* than the tree-walker
    tail recursion") was wrong: the compiler underneath was already solving it.
    CEK's headline feature is **redundant** with `-O2` here.
 
+   *Sharper restatement:* the kanaka/mal guide's step 5 (TCO) prescribes "add a
+   `while(TRUE)` loop around all code in EVAL; for `if`/`let*`/`do`/closure
+   call, set `ast` and `env` then `continue` instead of recursing." Our
+   `lisp.c` doesn't have that loop. clang's -O2 TRE writes it for us. mal's
+   step 5 is an explicit version of what clang did implicitly here. (See
+   `docs/project_notes/external_inspirations.md` for the wider comparison.)
+
 2. **CEK's one exclusive win is deep NON-tail recursion.** `sum(10000)` with
    `(+ n (sum ...))` cannot be looped by any optimizer. The tree-walker
    overflows the C stack (~10k frames); CEK computes it, because depth lives in
