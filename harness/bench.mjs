@@ -198,7 +198,11 @@ function printBaselines(bcEngine) {
   console.log(header);
   console.log('-'.repeat(header.length));
   const cmap = runCBaseline();
-  for (let i = 0; i < BENCHMARKS.length; i++) {
+  // The hand-written JS/C baselines only cover the original five direct
+  // benchmarks; meta-fib(12) has no comparable hand-written form (you'd
+  // be hand-writing a metacircular evaluator in JS, which defeats the
+  // point). Iterate over only the benchmarks that have a JS twin.
+  for (let i = 0; i < fns.length; i++) {
     const [name, , src] = BENCHMARKS[i];
     const bc = bestOf(() => bcEngine.run(src));
     const js = bestOf(fns[i]);
