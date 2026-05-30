@@ -10,8 +10,8 @@ hand-rolled mark-sweep GC.
 
 ```bash
 bash build.sh                            # builds engines -> *.wasm (needs clang+wasm-ld and node)
-node harness/test_bc.mjs                 # bytecode correctness suite (46 cases)
-node harness/parity.mjs                  # cross-engine parity (43 programs × 8 engines)
+node harness/test_bc.mjs                 # bytecode correctness suite (35 cases × 2 engines)
+node harness/parity.mjs                  # cross-engine parity (55 programs × 8 engines)
 node harness/lisp-cli.mjs -e "(begin (define fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))) (fib 20))"
 # open web/tiny-lisp-vm.html in a browser — self-contained live REPL + writeup
 ```
@@ -29,13 +29,14 @@ standalone equivalents live in `baselines/bench.{js,c}`.
 This is a **measurement study**, not a Lisp you should embed in a product.
 The engines deliberately mirror tinylisp/mal's minimal-validation style —
 that's part of how each engine stays in ~370–530 lines, which is what makes
-A/B comparisons honest. Concretely, the engines do **not** validate:
-arity (`(+ 1)` returns `1`; `((lambda (x) x) 1 2)` returns `1`), argument
-types (`(+ 'a 1)` silently degrades), or many malformed programs (often a
-bare `<error>` or empty output). All eight engines agree on this behaviour
-— enforced by `harness/parity.mjs` — so the comparisons remain
-apples-to-apples; just don't mistake "agrees across engines" for "is a
-robust Scheme implementation."
+A/B comparisons honest. Concretely, the engines still do **not** validate:
+primitive arity (`(+ 1)` returns `1`), argument types (`(+ 'a 1)` silently
+degrades), or many malformed programs (often a bare `<error>` or empty
+output). User-lambda arity *is* checked (`((lambda (x) x) 1 2)` is an
+error). All eight engines agree on this behaviour — enforced by
+`harness/parity.mjs` — so the comparisons remain apples-to-apples; just
+don't mistake "agrees across engines" for "is a robust Scheme
+implementation."
 
 ## Learn more
 

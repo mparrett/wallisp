@@ -14,10 +14,16 @@ For build/run, see [README.md](README.md). For the empirical record, see
 - **32-bit tagged values**, low 2 bits = tag: `00` fixnum (30-bit signed,
   **wraps at ~536M**), `01` cons (index into the cell arena), `10` symbol
   (interned, stable), `11` special (nil / true / error / primitives).
-- **Special forms:** `quote if define lambda let begin`.
+- **Special forms:** `quote if define lambda let begin cond`. `define` also
+  accepts the function shorthand `(define (f a b) body)`; `cond` recognises
+  `else` as the catch-all clause head.
 - **Primitives:** `cons car cdr + - * = < null? pair? list?`.
   **No strings, no division, no floats** — smallness is the point; it let us
   build the *same* semantics three ways and compare architectures honestly.
+- **Arity** on user lambdas is checked at call time — wrong-arity calls
+  return `<error>` rather than silently NIL-padding or dropping. Primitives
+  are still unchecked (`(+ 1)` returns `1`), matching the tinylisp/mal
+  minimal-validation style on the prim side.
 - **Reader:** recursive descent, `'` quote shorthand, tolerant of a missing `)`.
 
 ## The engines — `engines/`
