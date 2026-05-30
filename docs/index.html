@@ -106,6 +106,44 @@ p { margin: 0 0 1rem; }
 a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-soft); }
 a:hover { border-bottom-color: var(--accent); }
 
+/* Collapsible sections — each <h2> block is wrapped in <details> so the
+   page lands as a TOC of section titles and the reader opens what they
+   want. Pure HTML; no JS. */
+details {
+  border-top: 1px solid var(--border);
+  margin: 0;
+}
+details:last-of-type { border-bottom: 1px solid var(--border); margin-bottom: 2rem; }
+
+summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  padding: 1.25rem 0;
+}
+summary::-webkit-details-marker { display: none; }
+summary::before {
+  content: "+";
+  color: var(--accent);
+  font-weight: 400;
+  font-size: 1.25rem;
+  margin-right: 0.65em;
+  display: inline-block;
+  width: 1ch;
+  text-align: center;
+}
+details[open] > summary::before { content: "−"; }
+
+summary > h2 {
+  margin: 0;
+  display: inline;
+  font-size: 1.4rem;
+}
+summary:hover > h2 { color: var(--accent); }
+
+details[open] { padding-bottom: 2.5rem; }
+details[open] > summary { padding-bottom: 1rem; }
+
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.92em;
@@ -261,7 +299,8 @@ footer a { color: var(--ink-soft); border-bottom-color: var(--border); }
 
 <p>All eight engines export the same wasm ABI and agree byte-for-byte on a 43-program parity suite (<code>harness/parity.mjs</code>) &mdash; that's what keeps the A/B comparisons honest. They are deliberately minimal in the tinylisp/mal style: no arity checking, no type validation, no exhaustive error reporting. That keeps each engine in ~370&ndash;530 lines and the comparisons apples-to-apples; it also means this isn't a Lisp you'd embed in a product.</p>
 
-<h2><span class="section-num">1</span>What was built</h2>
+<details>
+<summary><h2><span class="section-num">1</span>What was built</h2></summary>
 
 <p>Three evaluator architectures &times; three garbage-collection strategies, eight engines in the grid:</p>
 
@@ -300,7 +339,10 @@ footer a { color: var(--ink-soft); border-bottom-color: var(--border); }
 
 <p>The tree-walker has a fourth variant too &mdash; <code>lisp_trampoline.c</code>, an explicit <code>while(TRUE)</code> form of the recursive eval &mdash; built to verify a measurement claim, not to test a new design point. We'll come back to it.</p>
 
-<h2><span class="section-num">2</span>The headline: bytecode wins, by a lot</h2>
+</details>
+
+<details>
+<summary><h2><span class="section-num">2</span>The headline: bytecode wins, by a lot</h2></summary>
 
 <p>Bytecode is 1.7&ndash;7&times; faster than every other engine on every benchmark in the suite. Here are all eight on a single program (fib 24), measured in Node/V8:</p>
 
@@ -405,7 +447,10 @@ case OP_CALL: {
 
 <p>The point isn't that this code is clever; it's that every operation does the minimum work and nothing more. A tree-walker's <code>(+ 1 2)</code> traverses three cons cells, dispatches through six <code>if</code> branches, builds a two-cell arg list, and calls into <code>apply_prim</code>. The bytecode <code>(+ 1 2)</code> is two <code>OP_CONST</code>s and one <code>OP_CALL</code> that runs the inlined add directly on the operand stack. The constant factor adds up.</p>
 
-<h2><span class="section-num">3</span>The H1 surprise: clang already gave us tail calls</h2>
+</details>
+
+<details>
+<summary><h2><span class="section-num">3</span>The H1 surprise: clang already gave us tail calls</h2></summary>
 
 <p>The original motivation for the CEK machine (engine #2 chronologically) was that the tree-walker would blow the C stack on deep tail recursion. A recursive <code>eval()</code> calling itself for the body of <code>(if cond then else)</code> stacks up a C frame per Lisp call. For <code>(countdown 1000000)</code>, that's a million C frames. Crash.</p>
 
@@ -456,7 +501,10 @@ case OP_CALL: {
 
 <p>The recursive form is paying no hidden cost. clang's TRE is doing exactly the transformation mal step 5 prescribes, and the modern C compiler hides nothing here. The "explicit trampoline is the canonical Lisp TCO pattern" stance is correct as a <em>portability guarantee</em> &mdash; works on any C compiler &mdash; but the recursive form is equally fast when the compiler has TRE.</p>
 
-<h2><span class="section-num">4</span>The GC tax: same collector, three different prices</h2>
+</details>
+
+<details>
+<summary><h2><span class="section-num">4</span>The GC tax: same collector, three different prices</h2></summary>
 
 <p>The mark-sweep collector is the same code in all three GC engines &mdash; the same free list, the same mark bits, the same sweep. But the runtime tax it costs varies wildly. Comparing each GC engine to its no-GC sibling:</p>
 
@@ -563,7 +611,10 @@ static inline u32 cons(u32 a, u32 d) {
 
 <p>How much pessimization happens depends on each engine's hot loop shape. <code>bytecode_gc</code>'s switch dispatch has many arms that never touch cons (<code>OP_LOADL</code>, <code>OP_JMP</code>, the inlined arithmetic) &mdash; V8 can keep specializing those arms tightly. <code>cek_gc</code>'s tight musttail chain is the case V8 specializes hardest, so it has the most to lose when forced to be conservative; it pays the highest amplification. <code>lisp_gc</code>'s one-big-recursive-function shape is in between &mdash; less specialization opportunity to begin with, so less to lose.</p>
 
-<h2><span class="section-num">5</span>The H2 zero floor: lifting an idea from tinylisp</h2>
+</details>
+
+<details>
+<summary><h2><span class="section-num">5</span>The H2 zero floor: lifting an idea from tinylisp</h2></summary>
 
 <p>If the tax is "per cons callsite reaching a function call," it should disappear when no function call is reachable from cons. Robert van Engelen's <a href="https://github.com/Robert-van-Engelen/tinylisp">tinylisp</a> &mdash; "Lisp in 99 lines of C" &mdash; demonstrates exactly this pattern.</p>
 
@@ -636,7 +687,10 @@ static void gc(void) {
 
 <p>The H2 mechanism story sharpens: the "zero tax" pattern isn't "make cons match the no-GC baseline." It's "make cons the simplest possible mutation &mdash; no function call, comparison against zero, monotonic decrement &mdash; and the result lands <em>below</em> the no-GC baseline because even the baseline had headroom."</p>
 
-<h2><span class="section-num">6</span>Methodology: measure, don't guess</h2>
+</details>
+
+<details>
+<summary><h2><span class="section-num">6</span>Methodology: measure, don't guess</h2></summary>
 
 <p>The project's working norm is "pre-register a prediction, then test it." Every hypothesis above was written down before the benchmark ran. The structure goes:</p>
 
@@ -678,7 +732,10 @@ static void gc(void) {
 
 <p>That's the actual transferable result of this project, more than any single engine. Four substrates means four places for performance to come from or vanish into; you can only find out by measuring all four.</p>
 
-<h2><span class="section-num">7</span>The ceiling: hand-written JS and C</h2>
+</details>
+
+<details>
+<summary><h2><span class="section-num">7</span>The ceiling: hand-written JS and C</h2></summary>
 
 <p>The methodology above describes a four-substrate ladder &mdash; C source, clang's optimizer, wasm, V8's JIT &mdash; and the workflow for decomposing performance across it. There's a natural follow-up: what would these algorithms cost with <em>no interpreter at all</em>? Hand-write the same five benchmarks in JavaScript and in C, run them on the same V8 and the same machine, and we get two reference points sitting above all eight engines &mdash; the upper bound on what these programs can cost on this hardware.</p>
 
@@ -719,7 +776,10 @@ static void gc(void) {
 
 <p>The engine work in this project moves us from 57 ms to 7.3 ms &mdash; about 8&times;, on the interpreter side of a fixed substrate. From 7.3 ms to 0.13 ms is the remaining ~55&times;, and it lives in compiler/JIT territory we don't control. The headroom is real, and it's worth knowing where it actually sits.</p>
 
-<h2><span class="section-num">8</span>A note on <code>-Oz</code></h2>
+</details>
+
+<details>
+<summary><h2><span class="section-num">8</span>A note on <code>-Oz</code></h2></summary>
 
 <p>The whole project is built with <code>clang -O2</code>. <code>-Oz</code> appears once in the falsifications above &mdash; "the thing that ate the switch-dispatch speedup." We never quantified its <em>size</em> effect, which turns out to be the more interesting story.</p>
 
@@ -754,7 +814,10 @@ static void gc(void) {
 
 <p>So why does <code>build.sh</code> still default to <code>-O2</code>? Because a single flag that doesn't make <em>any</em> engine worse is the safe shared setting for a comparison study. An opinionated build script would use <code>-Oz</code> for everything except <code>cek*</code> and ship the finalist at roughly half the byte count. The deeper point: clang's <code>-O2</code>/<code>-Oz</code> choice interacts with V8 in a way that isn't predictable from either layer alone &mdash; <code>-Oz</code> is "smaller and slower" on most native targets, and on V8 it's "smaller and usually equal or faster, but CEK 2&times; slower." Four substrates, four places for the answer to flip.</p>
 
-<h2><span class="section-num">9</span>Workload shape: when the eval loop IS the allocator</h2>
+</details>
+
+<details>
+<summary><h2><span class="section-num">9</span>Workload shape: when the eval loop IS the allocator</h2></summary>
 
 <p>Every benchmark above is small-integer-and-cons arithmetic: fib, tak, ack, nrev, tailsum. They differ along axes the engines were designed against (allocation rate, recursion depth, tail-call density), but they share a shape &mdash; the program <em>is</em> the hot loop, and the engine machinery is on top of it. There's a natural follow-up question: what if we change that &mdash; what if the program is itself an interpreter?</p>
 
@@ -799,7 +862,10 @@ static void gc(void) {
 
 <p>What's the takeaway worth taking out of this section? <strong>Workload shape sets which engine axes matter.</strong> The eight-engine suite doesn't have a single "fastest engine" &mdash; the answer depends on what the program does per step. Direct fib measures dispatch with near-zero allocation, so the engines order by dispatch quality and the GC variants pay nothing extra. Metacircular fib measures dispatch on top of heavy allocation, so engines order by both axes, the GC tax becomes visible, and the ordering rearranges. Choose your benchmark and you're implicitly choosing which engine to crown.</p>
 
-<h2>Closing &mdash; eight engines, four hypotheses, three falsifications</h2>
+</details>
+
+<details>
+<summary><h2>Closing &mdash; eight engines, four hypotheses, three falsifications</h2></summary>
 
 <p>The full project ran four pre-registered hypothesis arcs:</p>
 
@@ -811,6 +877,7 @@ static void gc(void) {
 </ul>
 
 <p>Three deferred ideas remain in <code>docs/project_incoming/</code> &mdash; two of them filed during the tinylisp/mal external reading. The full record (predictions, measurements, falsification logs, reframings) lives in <code>FINDINGS.md</code>. Architecture and ISA in <code>DEV.md</code>. Engine comparison matrix in <code>ENGINES.md</code>. All in the repo root.</p>
+</details>
 
 </div>
 
