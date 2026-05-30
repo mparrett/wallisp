@@ -754,6 +754,51 @@ static void gc(void) {
 
 <p>So why does <code>build.sh</code> still default to <code>-O2</code>? Because a single flag that doesn't make <em>any</em> engine worse is the safe shared setting for a comparison study. An opinionated build script would use <code>-Oz</code> for everything except <code>cek*</code> and ship the finalist at roughly half the byte count. The deeper point: clang's <code>-O2</code>/<code>-Oz</code> choice interacts with V8 in a way that isn't predictable from either layer alone &mdash; <code>-Oz</code> is "smaller and slower" on most native targets, and on V8 it's "smaller and usually equal or faster, but CEK 2&times; slower." Four substrates, four places for the answer to flip.</p>
 
+<h2><span class="section-num">9</span>Workload shape: when the eval loop IS the allocator</h2>
+
+<p>Every benchmark above is small-integer-and-cons arithmetic: fib, tak, ack, nrev, tailsum. They differ along axes the engines were designed against (allocation rate, recursion depth, tail-call density), but they share a shape &mdash; the program <em>is</em> the hot loop, and the engine machinery is on top of it. There's a natural follow-up question: what if we change that &mdash; what if the program is itself an interpreter?</p>
+
+<p>We can write a tiny Lisp interpreter in wallisp's own Lisp &mdash; <code>eval</code> / <code>apply</code> over an environment-as-association-list, primitives dispatched on the head symbol, recursion in the interpreted program supplied by a Y combinator (we have no mutation, so we can't tie the env knot otherwise). It's ~80 lines of Lisp, lives at <code>baselines/metacircular.lisp</code>, and runs on all eight engines without any host-language changes. Then we run fib(12) on it. Each engine is now running mceval, which is running fib.</p>
+
+<p>Pre-registered predictions before measuring: (a) <code>bytecode_gc</code> lands in single-digit-to-low-tens-of-ms on meta-fib; (b) engine ordering on metacircular matches ordering on direct fib (because the metacircular evaluator <em>is</em> the program in all eight cases, so engine cost should compose multiplicatively); (c) the <code>bytecode_gc</code> / <code>lisp_region</code> ratio stays close to its direct-fib value.</p>
+
+<figure>
+  <table>
+    <thead>
+      <tr><th>engine</th><th class="num">direct fib(12)</th><th class="num">meta-fib(12)</th><th class="num">metacircular tax</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="engine">lisp</td><td class="num">0.047 ms</td><td class="num">11.53 ms</td><td class="num">~245&times;</td></tr>
+      <tr><td class="engine">lisp_trampoline</td><td class="num">0.046 ms</td><td class="num">12.92 ms</td><td class="num">~281&times;</td></tr>
+      <tr><td class="engine">lisp_gc</td><td class="num">0.060 ms</td><td class="num">16.58 ms</td><td class="num">~277&times;</td></tr>
+      <tr><td class="engine">lisp_region</td><td class="num">0.041 ms</td><td class="num">11.98 ms</td><td class="num">~294&times;</td></tr>
+      <tr><td class="engine">cek</td><td class="num">0.087 ms</td><td class="num">19.90 ms</td><td class="num">~229&times;</td></tr>
+      <tr><td class="engine">cek_gc</td><td class="num">0.130 ms</td><td class="num">30.59 ms</td><td class="num">~235&times;</td></tr>
+      <tr><td class="engine">bytecode</td><td class="num">0.037 ms</td><td class="num"><strong>3.22 ms</strong></td><td class="num"><strong>~86&times;</strong></td></tr>
+      <tr><td class="engine">bytecode_gc</td><td class="num">0.034 ms</td><td class="num">5.44 ms</td><td class="num">~159&times;</td></tr>
+    </tbody>
+  </table>
+  <figcaption>Direct fib(12) and meta-fib(12) on each engine, best-of-25. Metacircular tax = (meta / direct).</figcaption>
+</figure>
+
+<p>One prediction confirmed, two refuted &mdash; the more interesting outcome.</p>
+
+<p><strong>(a) CONFIRMED.</strong> <code>bytecode_gc</code> at 5.44 ms on meta-fib(12) &mdash; it really is fast enough to host its own evaluator at a non-embarrassing speed.</p>
+
+<p><strong>(b) REFUTED.</strong> The ordering reshuffles. <code>bytecode_gc</code> drops from 1st to 2nd; <code>lisp</code> jumps from 5th to 3rd; <code>lisp_region</code>'s H2 advantage shrinks to noise. The top-of-table flip is the load-bearing one: the GC engine LOSES to the no-GC engine under metacircular workload.</p>
+
+<p><strong>(c) REFUTED.</strong> <code>bytecode_gc / lisp_region</code> direct = 0.83&times;, metacircular = 0.45&times;. Roughly twice the spread between engines on metacircular than on direct. The max-over-min ratio across all eight engines goes from 3.8&times; on direct fib(12) to 9.5&times; on meta-fib(12). The metacircular workload <em>amplifies</em> engine differences.</p>
+
+<p>Three things sharpen out of these refutations.</p>
+
+<p><strong>The metacircular tax is not constant.</strong> It varies 86&times; to 294&times; by engine. It tracks two axes simultaneously: dispatch shape under deep nested application (bytecode wins here &mdash; its compiled-once <code>OP_CALL</code> machinery doesn't care that the recursion is mceval-shaped), and allocation rate under heavy cons pressure (the metacircular eval cons's an env extension on every closure call). Engines that win on both axes pay the smallest tax; engines that lose on either pay more.</p>
+
+<p><strong>Bytecode's lead WIDENS under metacircular workload.</strong> Direct fib: bytecode is ~1.3&times; faster than the tree-walker. Metacircular fib: bytecode is ~3.6&times; faster than the tree-walker. The lever grows. This is the <em>opposite</em> of H4's "GC widens bytecode's lead by allocation pressure" mechanism: there, the widening was driven by collection cost interacting with engine shape. Here, the widening is driven by the workload itself becoming dispatch-heavier (every mceval call is a special-form-or-application decision; bytecode pays this dispatch once at compile time, tree-walkers pay it every step).</p>
+
+<p><strong>The GC tax flips sign on metacircular.</strong> Direct fib(12): <code>bytecode_gc</code> beats <code>bytecode</code> by ~10% (no GC fires, the optimization-barrier tax is negligible at this size). Metacircular fib(12): <code>bytecode_gc</code> LOSES to <code>bytecode</code> by 69%. The metacircular workload allocates ~10&times; more than direct fib (env extensions on every closure call, intermediate eval-list cons cells, closure tuples), and the per-cons-callsite optimization barrier &mdash; the mechanism §4 named as H4's true cost &mdash; stops being amortized to nothing. On direct fib the hot loop doesn't allocate; on metacircular, the hot loop <em>is</em> the allocator.</p>
+
+<p>What's the takeaway worth taking out of this section? <strong>Workload shape sets which engine axes matter.</strong> The eight-engine suite doesn't have a single "fastest engine" &mdash; the answer depends on what the program does per step. Direct fib measures dispatch with near-zero allocation, so the engines order by dispatch quality and the GC variants pay nothing extra. Metacircular fib measures dispatch on top of heavy allocation, so engines order by both axes, the GC tax becomes visible, and the ordering rearranges. Choose your benchmark and you're implicitly choosing which engine to crown.</p>
+
 <h2>Closing &mdash; eight engines, four hypotheses, three falsifications</h2>
 
 <p>The full project ran four pre-registered hypothesis arcs:</p>
