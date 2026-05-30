@@ -118,7 +118,8 @@ gives proper tail calls. Verified: with a deliberately tiny 1024-frame call
 stack, a 1,000,000-deep tail loop and 1,000,000-deep *mutual* recursion both
 complete, while non-tail `sum(5000)` still correctly hits the ceiling.
 
-**It costs throughput** (isolated A/B, same process, results identical):
+**Originally measured: TCO costs throughput.** The original table (kept here
+as a historical anchor):
 
 | benchmark | no-TCO | TCO    | TCO cost |
 |-----------|--------|--------|----------|
@@ -127,11 +128,37 @@ complete, while non-tail `sum(5000)` still correctly hits the ceiling.
 | fib(24)   | 10.878 | 11.778 | +8%      |
 | nrev      | 0.933  | 1.058  | +13%     |
 
-The tell: `tailsum` is tail-recursive, so TCO does *less* work per iteration (no
-call-stack push) yet still ran 7% slower. That rules out the per-op logic and
-points at the cause — the dispatch loop grew ~1KB, and a bigger hot loop gives
-the underlying JIT less to optimize (register pressure, codegen). Same
-substrate-JIT sensitivity seen elsewhere: loop *size* matters, not just logic.
+The original tell: `tailsum` is tail-recursive, so TCO does *less* work per
+iteration (no call-stack push) yet still ran 7% slower. That ruled out the
+per-op logic and pointed at the cause — the dispatch loop grew ~1KB, and a
+bigger hot loop gave the underlying JIT less to optimize (register pressure,
+codegen). Same substrate-JIT sensitivity seen elsewhere: loop *size* matters,
+not just logic.
+
+**Re-measured 2026-05-29 on clang 22 / V8 in Node 25: the sign has flipped.**
+Same A/B (TCO vs no-TCO bytecode_gc, no-TCO built by patching the compiler at
+`engines/bytecode_gc.c:266` to emit `OP_CALL; OP_RET` instead of
+`OP_TAILCALL`), best-of-25, three repeats:
+
+| benchmark      | no-TCO ms | TCO ms | TCO cost (was) |
+|----------------|----------:|-------:|---------------:|
+| tailsum(30000) |     1.649 |  1.573 |  **−5%** (+7%) |
+| fib(24)        |     7.520 |  7.279 |  **−3%** (+8%) |
+| meta-fib(12)   |     3.994 |  3.877 |  **−3%**       |
+
+TCO is now a small win, not a cost. The "loop-size sensitivity" mechanism still
+makes sense — bigger hot loop, less for the JIT to specialize — but clang 22
+emits the `OP_TAILCALL` arm in a shape V8 now prefers (or at least doesn't
+penalize). The two measurements bracket the substrate-JIT story: the cost is
+real but the sign isn't stable across toolchain versions. Treat absolute throughput
+deltas under 10% as "depends on which clang and V8 you build for today."
+
+The metacircular row was added during the meta workup — natural hypothesis:
+the mceval ↔ mcapply chain in `baselines/metacircular.lisp` is a long tail
+loop (closure-call → eval-body → application → closure-call), so even a
+program that isn't notionally tail-recursive at the source level benefits
+when its hot dispatch edges ARE in tail position. Confirmed: meta-fib(12) is
+3% faster with TCO.
 
 **TCO fixes the stack, not the heap.** A long tail loop no longer exhausts the
 call stack — but each iteration still *allocates a frame that is never
@@ -142,8 +169,9 @@ TCO gives constant call *stack*, but only a GC gives constant *heap*. This is th
 clearest argument yet that the garbage collector is the real remaining ceiling.
 
 Verdict: kept as default. For a Lisp, proper tail calls are close to table
-stakes (a loop that dies at a fixed depth is a bad surprise), and the ~7% buys
-correct semantics. Trivially reverted if raw throughput is the only goal.
+stakes (a loop that dies at a fixed depth is a bad surprise). On the original
+toolchain the ~7% cost bought correct semantics; on the current toolchain
+TCO is a small free win as well as correct.
 
 ## Honest caveats
 
