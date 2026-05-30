@@ -32,8 +32,15 @@ largest `br_table` (the 12-arm one) and grab ~90 lines around it:
 
 ```bash
 wasm2wat bytecode_gc.wasm > /tmp/bytecode_gc.wat
-# Locate the br_table with the most targets — that's the VM dispatch.
-LINE=$(awk '/br_table/{if(NF>max){max=NF;ln=NR}} END{print ln}' /tmp/bytecode_gc.wat)
+# Locate the br_table with the most UNIQUE numeric targets — that's the VM
+# dispatch (13 distinct labels: 12 opcode arms + 1 default). NOT the same
+# as the br_table with the most fields — large 0/1-only lookup tables in
+# the reader/printer can have many more fields but only 2 distinct labels.
+LINE=$(awk '/br_table/{
+  delete s; n=0;
+  for(i=1;i<=NF;i++) if($i~/^[0-9]+$/ && !($i in s)){s[$i]=1; n++}
+  if(n>max){max=n; ln=NR}
+} END{print ln}' /tmp/bytecode_gc.wat)
 sed -n "$((LINE-15)),$((LINE+75))p" /tmp/bytecode_gc.wat \
   > docs/project_notes/wasm_dispatch.excerpt.wat
 ```
