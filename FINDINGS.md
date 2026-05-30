@@ -541,6 +541,18 @@ having to assume `cons` could reach `gc()` from inside the hot mceval
 loop. On direct fib, that hot loop doesn't allocate, so the barrier
 is amortized to nothing; on metacircular, the hot loop IS the allocator.
 
+**Post 1-arg fast path (2026-05-29):** the bytecode_gc loss on
+metacircular dropped from 69% to **~7.6%** (3.39 vs 3.15 ms) after
+extending the OP_CALL inline fast path to 1-arg primitives. Direction of
+the flip is preserved (bytecode still beats bytecode_gc on meta);
+magnitude collapsed because mceval's hot path no longer allocates an
+arg-list cons per `(car x)` / `(cdr x)` / `(null? x)` / `(pair? x)`
+call, which was most of the per-iteration cons traffic. The H4
+mechanism story stands — the optimization barrier is still bigger on
+allocation-heavy workloads — but the *evidence* for the sign-flip
+finding is now narrower. See "OP_CALL primitive inlining → Extension:
+1-arg primitive inlining" below for the patch verdict.
+
 The third finding is also a small ratification of H2's mechanism. The
 no-GC tree-walker (`lisp`) at 11.53 ms slightly *beats* the region-drop
 (`lisp_region`) at 11.98 ms on metacircular — within noise, but
@@ -657,6 +669,76 @@ The compile-time bc_super pattern would answer `3` here.
 Edge: pre-existing undefined-on-type-error behavior preserved. `(+ 'x 1)`
 produced garbage before and produces (different) garbage now — same class
 of issue the fixval/shift trick has always carried.
+
+### Extension: 1-arg primitive inlining
+
+Followup measurement, prompted by the metacircular spelunk. The bytecode
+disasm of `baselines/metacircular.lisp` showed 32% of the listing was
+`LOADG` of primitive symbols (`car`, `cdr`, `null?`, `pair?`) — every
+mceval iteration calls these, and each one went through the full
+`apply_prim` path (cons args → dispatch → unpack). The original 2-arg
+fast path covers `[PR_ADD, PR_LT]` only; extending to the 1-arg ops
+seemed structurally identical but on a different prim range.
+
+Pre-registered prediction: −5% to −15% on meta-fib(12); ≤2% on direct
+fib(24) (which doesn't use these). Falsification at <2% on meta would
+have echoed the env-lookup precedent (FINDINGS.md "Two surprises"):
+bytecode-count share misleading about runtime cost because V8 already
+specializes the apply_prim path.
+
+Patch shape: a parallel `else if(n==1 && id in {PR_CAR, PR_CDR, PR_NULLP,
+PR_PAIRP, PR_LISTQ})` arm in both `OP_CALL` and `OP_TAILCALL`. The
+runtime check is the same redefinition guard as the 2-arg path — `fn`
+comes from `OP_LOADG`, so `(define car ...)` still lands in the user's
+new binding. Module size +389 bytes (15748 → 16137).
+
+**Measured A/B, best-of-25, three runs (mean delta vs unpatched):**
+
+| benchmark      | predicted | measured | notes                              |
+|----------------|-----------|---------:|------------------------------------|
+| fib(24)        | ≤2%       |  ~−1%    | no 1-arg prims in hot loop         |
+| tak(18,12,6)   | ≤2%       |  ~−2%    | same                               |
+| ack(3,4)       | ≤2%       |  ~0%     | same                               |
+| tailsum(30000) | —         |  noise   | tail loop, no 1-arg prims          |
+| **nrev+sum(150)** | —      | **−13%** | **unpredicted: hot loop is car/cdr/null?** |
+| **meta-fib(12)** | −5% to −15% | **−18.5%** | **beats upper bound** |
+
+Two findings worth flagging.
+
+**1. The meta-fib win beats the upper prediction.** −18.5% mean is
+materially above the −5% to −15% pre-registered range. The mechanism
+is exactly what the disasm suggested: each closure invocation in
+mceval runs many small 1-arg ops (`(pair? form)`, `(car form)`,
+`(cdr form)`, `(null? env)`, `(car (car env))`), and now each of these
+skips the arg-list cons + apply_prim dispatch entirely. The bonus
+is that GC count on meta-fib drops from 1 to 0 — fewer per-call
+cons cells means the heap stops crossing the collection threshold,
+echoing finding #1 from the original 2-arg patch.
+
+**2. `nrev+sum(150)` was not predicted to win; −13% is the surprise.**
+   nrev's hot loop is `(if (null? a) b (cons (car a) (ap (cdr a) b)))` —
+three 1-arg ops per recursion step. The unpatched engine was paying
+arg-list cons + dispatch for each one, which the new fast path skips.
+This is the *exact* benchmark the original 2-arg patch *regressed* on
+(3% slower because of dispatch-loop-growth on a 1-arg workload). The
+1-arg extension flips that sign: the dispatch loop grew further still,
+but now actually catches what nrev's hot loop does, so the cost is
+more than paid back.
+
+Both 1-arg findings carry the same H4 mechanism: the optimization
+barrier per cons callsite. Removing the arg-list `cons()` in the fast
+path removes one barrier per 1-arg call from V8's specialization
+concerns; fewer pessimization points → tighter JIT'd hot loop.
+
+The env-lookup precedent didn't fire here — the difference is what
+the fast path is actually skipping. Env-lookup substituted O(1) array
+for cons-cell walk, both of which are still pure reads; V8 specializes
+both well. The 1-arg fast path removes an arg-list `cons()` (the GC
+optimization barrier per H4) plus a function call into `apply_prim`,
+which are *not* things V8 can specialize away on its own.
+
+Verdict: **shipped**. Engine source patched, `bytecode_gc.wasm` rebuilt,
+test_bc 46/46 + parity 43/43 hold.
 
 ## H4 — GC ported into CEK (`cek_gc.c`)
 

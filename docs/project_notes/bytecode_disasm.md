@@ -84,6 +84,26 @@ speedup, not the 32% the bytecode-count share suggests. A measurement
 worth doing later only if cheap; otherwise filed as another instance of
 "don't trust opcode counts for runtime cost."
 
+### Followup: 1-arg fast path landed (different lever, related target)
+
+The disasm also showed many 1-arg primitive calls: `(car form)`,
+`(cdr form)`, `(null? env)`, `(pair? form)`. Each one was going through
+the full `apply_prim` path (arg-list `cons()` + dispatch + return). Those
+are *engine-side* primitives, not mcapply-side dispatch, so they're a
+separate lever from the speculation above. Extending the existing
+`OP_CALL` 2-arg fast path to also cover `n==1` with
+`{PR_CAR, PR_CDR, PR_NULLP, PR_PAIRP, PR_LISTQ}` shipped at
+**−18.5% on meta-fib(12)** and an unpredicted **−13% on nrev+sum(150)**.
+See FINDINGS.md "OP_CALL primitive inlining → Extension: 1-arg primitive
+inlining" for the verdict.
+
+The mcapply nested-`if` speculation above is still open. The 1-arg fast
+path narrows the target: now mcapply's per-iteration cost is dominated
+by `(= f 'PRIM)` (a *2-arg* PR_EQ call, already in the fast path) plus
+the `if`/`JFALSE` ladder, not the engine-side primitive dispatch. A
+hash-based mcapply might still help, but the upper bound has shrunk
+correspondingly.
+
 **Only 18% of calls are tail.** 21 TAILCALL vs 95 CALL. The eval/apply
 alternation at the OUTER level IS tail (mceval ends in `(mcapply ...)`,
 mcapply for closures ends in `(mceval body env)`), and those edges are

@@ -355,6 +355,17 @@ static u32 run(u32 entry){
               default:     r=((i32)a<(i32)b)?TRUE:NIL; break; // PR_LT
             }
             R_vsp-=3; vstack[R_vsp++]=r;
+          } else if(n==1 && (id==PR_CAR||id==PR_CDR||(id>=PR_NULLP&&id<=PR_LISTQ))){
+            // inline 1-arg car/cdr/null?/pair?/list?: skip arg-list cons + apply_prim
+            u32 a=vstack[R_vsp-1], r;
+            switch(id){
+              case PR_CAR:   r=is_cons(a)?cells[considx(a)].car:NIL; break;
+              case PR_CDR:   r=is_cons(a)?cells[considx(a)].cdr:NIL; break;
+              case PR_NULLP: r=is_nil(a)?TRUE:NIL; break;
+              case PR_PAIRP: r=is_cons(a)?TRUE:NIL; break;
+              default:       r=(is_nil(a)||is_cons(a))?TRUE:NIL; break; // PR_LISTQ
+            }
+            R_vsp-=2; vstack[R_vsp++]=r;
           } else {
             u32 args=NIL; for(i32 k=(i32)R_vsp-1;k>=(i32)(R_vsp-n);k--) args=cons(vstack[k],args);
             u32 r=apply_prim(fn,args);
@@ -393,6 +404,17 @@ static u32 run(u32 entry){
               default:     r=((i32)a<(i32)b)?TRUE:NIL; break; // PR_LT
             }
             R_vsp-=3; vstack[R_vsp++]=r;
+          } else if(n==1 && (id==PR_CAR||id==PR_CDR||(id>=PR_NULLP&&id<=PR_LISTQ))){
+            // inline 1-arg car/cdr/null?/pair?/list?: skip arg-list cons + apply_prim
+            u32 a=vstack[R_vsp-1];
+            switch(id){
+              case PR_CAR:   r=is_cons(a)?cells[considx(a)].car:NIL; break;
+              case PR_CDR:   r=is_cons(a)?cells[considx(a)].cdr:NIL; break;
+              case PR_NULLP: r=is_nil(a)?TRUE:NIL; break;
+              case PR_PAIRP: r=is_cons(a)?TRUE:NIL; break;
+              default:       r=(is_nil(a)||is_cons(a))?TRUE:NIL; break; // PR_LISTQ
+            }
+            R_vsp-=2; vstack[R_vsp++]=r;
           } else {
             u32 args=NIL; for(i32 k=(i32)R_vsp-1;k>=(i32)(R_vsp-n);k--) args=cons(vstack[k],args);
             r=apply_prim(fn,args);
