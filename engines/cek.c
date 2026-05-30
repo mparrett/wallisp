@@ -95,7 +95,7 @@ static u32 intern(const char* s, u32 len){
 }
 
 // cached symbols for special forms (filled in init)
-static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin;
+static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_cond,s_else;
 
 // ---- reader ----------------------------------------------------------------
 // Hand-rolled recursive descent over a source buffer. Supports ints (with
@@ -263,8 +263,10 @@ static u32 reverse(u32 lst){
 }
 static u32 bind_params(u32 fn, u32 args){
   u32 p=car(cdr(fn)), env=car(cdr(cdr(cdr(fn))));
-  for(u32 a=args; is_cons(p)&&is_cons(a); p=cdr(p),a=cdr(a))
+  u32 a=args;
+  for(; is_cons(p)&&is_cons(a); p=cdr(p),a=cdr(a))
     env=env_define(env,car(p),car(a));
+  if(is_cons(p) || is_cons(a)) return ERR;            // arity mismatch
   return env;
 }
 
@@ -292,8 +294,27 @@ static u32 eval_expr(u32 C, u32 E, u32 K){
     TAIL eval_expr(car(cdr(C)), E, k);              // evaluate the test
   }
   if(op==s_define){
-    u32 k = k_define(car(cdr(C)), K);
+    u32 head = car(cdr(C));
+    if(is_cons(head)){
+      // (define (f a b) body) -> (define f (lambda (a b) body))
+      u32 name=car(head), params=cdr(head), body=car(cdr(cdr(C)));
+      u32 lam=cons(s_lambda, cons(params, cons(body, NIL)));
+      u32 d  =cons(s_define, cons(name,   cons(lam,  NIL)));
+      TAIL eval_expr(d, E, K);
+    }
+    u32 k = k_define(head, K);
     TAIL eval_expr(car(cdr(cdr(C))), E, k);         // evaluate the value
+  }
+  if(op==s_cond){
+    // (cond (t1 e1) ... [(else en)]) -> (if t1 e1 (if t2 e2 ... en))
+    u32 rev=NIL; for(u32 c=cdr(C); is_cons(c); c=cdr(c)) rev=cons(car(c),rev);
+    u32 expanded=NIL;
+    for(u32 c=rev; is_cons(c); c=cdr(c)){
+      u32 cl=car(c); u32 test=car(cl), body=car(cdr(cl));
+      if(test==s_else) expanded=body;
+      else expanded=cons(s_if, cons(test, cons(body, cons(expanded, NIL))));
+    }
+    TAIL eval_expr(expanded, E, K);
   }
   if(op==s_begin){
     u32 body=cdr(C);
@@ -355,6 +376,7 @@ static u32 return_val(u32 V, u32 _unused, u32 K){
       }
       if(is_closure(fn)){
         u32 E2=bind_params(fn, args);
+        if(E2==ERR) return ERR;                       // arity mismatch
         TAIL eval_expr(car(cdr(cdr(fn))), E2, next); // body, original next-K (tail!)
       }
       return ERR;                                    // applied a non-function
@@ -382,6 +404,8 @@ static void init(){
   s_lambda=intern("lambda",6);
   s_let   =intern("let",3);
   s_begin =intern("begin",5);
+  s_cond  =intern("cond",4);
+  s_else  =intern("else",4);
   s_closure=intern("%closure",8);
   // sentinel head: car is an unbound marker that matches no real symbol.
   g_head = cons(UNBOUND, NIL);

@@ -136,7 +136,7 @@ static u32 intern(const char* s, u32 len){
   return mksym(i);
 }
 
-static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin;
+static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_cond,s_else;
 
 // ---- reader (identical) ----------------------------------------------------
 static const char* rp;
@@ -304,14 +304,44 @@ static u32 eval(u32 x, u32 env){
   }
 
   if(op==s_define){
-    u32 name = car(cdr(x));                     // name is a symbol — not collectable
+    u32 head = car(cdr(x));
+    if(is_cons(head)){
+      // (define (f a b) body) -> name=f, val=(lambda (a b) body)
+      // params/body reachable via x (rooted at base+0) across make_closure.
+      u32 name = car(head), params = cdr(head), body = car(cdr(cdr(x)));
+      u32 clo  = make_closure(params, body, env);
+      global_define(name, clo);
+      R_ssp = base;
+      return name;
+    }
     u32 val  = eval(car(cdr(cdr(x))), env);
     if(val==ERR){ R_ssp = base; return ERR; }
     // global_define's internal conses chain protects via gc_a/gc_b; val is the
     // gc_b of the inner cons(name, val), so it's covered.
-    global_define(name, val);
+    global_define(head, val);
     R_ssp = base;
-    return name;
+    return head;
+  }
+  if(op==s_cond){
+    // (cond (t1 e1) ... [(else en)]): walk clauses, eval test non-tail, body tail.
+    // x rooted at base+0 keeps the clause chain reachable across each test eval.
+    for(u32 c = cdr(x); is_cons(c); c = cdr(c)){
+      u32 cl = car(c); u32 test = car(cl);
+      if(test==s_else){
+        u32 body = car(cdr(cl));
+        R_ssp = base;
+        return eval(body, env);                 // TRE-preserving
+      }
+      u32 t = eval(test, env);
+      if(t==ERR){ R_ssp = base; return ERR; }
+      if(!is_nil(t)){
+        u32 body = car(cdr(cl));
+        R_ssp = base;
+        return eval(body, env);                 // TRE-preserving
+      }
+    }
+    R_ssp = base;
+    return NIL;                                 // no clause matched
   }
 
   if(op==s_lambda){
@@ -384,6 +414,7 @@ static u32 eval(u32 x, u32 env){
       R_save[ne_slot] = env_define(R_save[ne_slot], car(p), car(a));
       p = cdr(p); a = cdr(a);
     }
+    if(is_cons(p) || is_cons(a)){ R_ssp = base; return ERR; }   // arity mismatch
     u32 body = car(cdr(cdr(fn)));
     u32 nenv = R_save[ne_slot];
     R_ssp = base;
@@ -432,6 +463,8 @@ static void init(){
   s_lambda=intern("lambda",6);
   s_let   =intern("let",3);
   s_begin =intern("begin",5);
+  s_cond  =intern("cond",4);
+  s_else  =intern("else",4);
   s_closure=intern("%closure",8);
   g_head = cons(UNBOUND, NIL);
   g_env  = g_head;

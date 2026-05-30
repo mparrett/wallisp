@@ -43,6 +43,25 @@ const tests = [
   // CRITICAL: rebinding a primitive must still take effect through the inline path.
   // A bug that switched on a compile-time id would answer 3 and break redefinition.
   ["(begin (define + (lambda (a b) 99)) (+ 1 2))", "99"],
+
+  // arity check: under- and over-supply must error, not silently NIL-pad or drop.
+  ["((lambda (x y) x) 1)",       "<error>"],
+  ["((lambda (x) x) 1 2)",       "<error>"],
+  ["((lambda (x y) (+ x y)) 1 2)", "3"],
+  // tail-call arity is checked too:
+  ["(begin (define f (lambda (n) (if (= n 0) 'done (f)))) (f 3))", "<error>"],
+
+  // define-form shorthand: (define (name args...) body)
+  ["(begin (define (sq x) (* x x)) (sq 9))", "81"],
+  ["(begin (define (add a b) (+ a b)) (add 3 4))", "7"],
+  ["(begin (define (fact n) (if (< n 1) 1 (* n (fact (- n 1))))) (fact 5))", "120"],
+
+  // cond: clause walk, else fallback, no-else fallthrough.
+  ["(cond ((< 1 2) 'a) (else 'b))",                    "a"],
+  ["(cond ((= 1 2) 'a) ((= 3 3) 'b) (else 'c))",       "b"],
+  ["(cond ((= 1 2) 'a) ((= 3 4) 'b))",                 "()"],
+  ["(cond)",                                            "()"],
+  ["(begin (define (sgn n) (cond ((< n 0) -1) ((< 0 n) 1) (else 0))) (cons (sgn -7) (cons (sgn 0) (cons (sgn 9) nil))))", "(-1 0 1)"],
 ];
 
 async function main() {

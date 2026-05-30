@@ -110,7 +110,7 @@ static u32 intern(const char* s, u32 len){
   return mksym(i);
 }
 
-static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin;
+static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_cond,s_else;
 
 // ---- reader (identical to lisp.c) ------------------------------------------
 static const char* rp;
@@ -251,11 +251,30 @@ static u32 eval(u32 ast, u32 env){
       continue;                                          // TAIL: chosen branch
     }
     if(op==s_define){
-      u32 name=car(cdr(ast));
+      u32 head=car(cdr(ast));
+      if(is_cons(head)){
+        // (define (f a b) body) -> name=f, val=(lambda (a b) body)
+        u32 name=car(head), params=cdr(head), body=car(cdr(cdr(ast)));
+        global_define(name, make_closure(params, body, env));
+        return name;
+      }
       u32 val=eval(car(cdr(cdr(ast))),env);             // value: non-tail
       if(val==ERR) return ERR;
-      global_define(name,val);
-      return name;
+      global_define(head,val);
+      return head;
+    }
+    if(op==s_cond){
+      // (cond (t1 e1) ... [(else en)]): scan clauses; chosen body runs in tail position.
+      u32 chosen=UNBOUND;
+      for(u32 c=cdr(ast); is_cons(c); c=cdr(c)){
+        u32 cl=car(c); u32 test=car(cl);
+        if(test==s_else){ chosen=car(cdr(cl)); break; }
+        u32 t=eval(test,env);                            // test: non-tail
+        if(t==ERR) return ERR;
+        if(!is_nil(t)){ chosen=car(cdr(cl)); break; }
+      }
+      if(chosen==UNBOUND) return NIL;                    // no clause matched
+      ast=chosen; continue;                              // TAIL: chosen body
     }
     if(op==s_lambda){
       return make_closure(car(cdr(ast)), car(cdr(cdr(ast))), env);
@@ -300,6 +319,7 @@ static u32 eval(u32 ast, u32 env){
         newenv=env_define(newenv,car(p),car(a));
         p=cdr(p); a=cdr(a);
       }
+      if(is_cons(p) || is_cons(a)) return ERR;           // arity mismatch
       ast = body; env = newenv;
       continue;                                          // TAIL: closure body
     }
@@ -321,6 +341,8 @@ static void init(){
   s_lambda=intern("lambda",6);
   s_let   =intern("let",3);
   s_begin =intern("begin",5);
+  s_cond  =intern("cond",4);
+  s_else  =intern("else",4);
   s_closure=intern("%closure",8);
   g_head = cons(UNBOUND, NIL);
   g_env  = g_head;

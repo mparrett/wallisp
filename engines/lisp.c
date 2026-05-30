@@ -94,7 +94,7 @@ static u32 intern(const char* s, u32 len){
 }
 
 // cached symbols for special forms (filled in init)
-static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin;
+static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_cond,s_else;
 
 // ---- reader ----------------------------------------------------------------
 // Hand-rolled recursive descent over a source buffer. Supports ints (with
@@ -236,11 +236,27 @@ static u32 eval(u32 x, u32 env){
     else           return eval(car(cdr(cdr(cdr(x)))),env);
   }
   if(op==s_define){
-    u32 name=car(cdr(x));
+    u32 head=car(cdr(x));
+    if(is_cons(head)){
+      // (define (f a b) body) -> name=f, val=(lambda (a b) body)
+      u32 name=car(head), params=cdr(head), body=car(cdr(cdr(x)));
+      global_define(name, make_closure(params, body, env));
+      return name;
+    }
     u32 val=eval(car(cdr(cdr(x))),env);
     if(val==ERR) return ERR;
-    global_define(name,val);
-    return name;
+    global_define(head,val);
+    return head;
+  }
+  if(op==s_cond){
+    for(u32 c=cdr(x); is_cons(c); c=cdr(c)){
+      u32 cl=car(c); u32 test=car(cl), body=car(cdr(cl));
+      if(test==s_else) return eval(body,env);
+      u32 t=eval(test,env);
+      if(t==ERR) return ERR;
+      if(!is_nil(t)) return eval(body,env);
+    }
+    return NIL;
   }
   if(op==s_lambda){
     return make_closure(car(cdr(x)), car(cdr(cdr(x))), env);
@@ -278,6 +294,7 @@ static u32 eval(u32 x, u32 env){
       newenv=env_define(newenv,car(p),car(a));
       p=cdr(p); a=cdr(a);
     }
+    if(is_cons(p) || is_cons(a)) return ERR;        // arity mismatch
     return eval(body,newenv);
   }
   return ERR;
@@ -298,6 +315,8 @@ static void init(){
   s_lambda=intern("lambda",6);
   s_let   =intern("let",3);
   s_begin =intern("begin",5);
+  s_cond  =intern("cond",4);
+  s_else  =intern("else",4);
   s_closure=intern("%closure",8);
   // sentinel head: car is an unbound marker that matches no real symbol.
   g_head = cons(UNBOUND, NIL);

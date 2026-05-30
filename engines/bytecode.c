@@ -69,7 +69,7 @@ static u32 intern(const char*s,u32 len){
   u32 i=sym_top++; for(u32 k=0;k<len;k++) symname[i][k]=s[k]; symlen[i]=len;
   return mksym(i);
 }
-static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_closure;
+static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_closure,s_cond,s_else;
 
 // ---- reader (identical) ----------------------------------------------------
 static const char*rp; static const char*rend;
@@ -132,6 +132,7 @@ static u32 mkclosure(u32 body_addr,u32 nparams,u32 env){
 }
 static int is_closure(u32 v){ return is_cons(v)&&car(v)==s_closure; }
 #define clo_body(c)    fixval(car(cdr(c)))
+#define clo_nparams(c) fixval(car(cdr(cdr(c))))
 #define clo_env(c)     car(cdr(cdr(cdr(c))))
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -189,9 +190,28 @@ static void compile(u32 x,u32 cenv,int tail){
     return;
   }
   if(op==s_define){
+    u32 head=car(cdr(x));
+    if(is_cons(head)){
+      // (define (f a b) body) -> (define f (lambda (a b) body))
+      u32 name=car(head), params=cdr(head), body=car(cdr(cdr(x)));
+      u32 lam=cons(s_lambda,cons(params,cons(body,NIL)));
+      u32 d=cons(s_define,cons(name,cons(lam,NIL)));
+      compile(d,cenv,tail); return;
+    }
     compile(car(cdr(cdr(x))),cenv,0);
-    emit(OP_DEFG); emit(symidx(car(cdr(x))));
+    emit(OP_DEFG); emit(symidx(head));
     if(tail)emit(OP_RET); return;
+  }
+  if(op==s_cond){
+    // (cond (t1 e1) ... (else en)) -> (if t1 e1 (if t2 e2 ... en))
+    u32 rev=NIL; for(u32 c=cdr(x);is_cons(c);c=cdr(c)) rev=cons(car(c),rev);
+    u32 expanded=NIL;
+    for(u32 c=rev;is_cons(c);c=cdr(c)){
+      u32 cl=car(c); u32 test=car(cl), body=car(cdr(cl));
+      if(test==s_else) expanded=body;
+      else expanded=cons(s_if,cons(test,cons(body,cons(expanded,NIL))));
+    }
+    compile(expanded,cenv,tail); return;
   }
   if(op==s_lambda){
     u32 params=car(cdr(x)), body=car(cdr(cdr(x)));
@@ -272,6 +292,7 @@ static u32 run(u32 entry){
           u32 r=apply_prim(fn,args);
           vsp-=(n+1); vstack[vsp++]=r;
         } else if(is_closure(fn)){
+          if(n!=clo_nparams(fn)) return ERR;        // arity mismatch
           u32 vals=NIL; for(i32 k=(i32)vsp-1;k>=(i32)(vsp-n);k--) vals=cons(vstack[k],vals);
           u32 frame=cons(vals, clo_env(fn));
           vsp-=(n+1);
@@ -288,6 +309,7 @@ static u32 run(u32 entry){
         // value and returns it immediately.
         u32 n=code[ip++]; u32 fn=vstack[vsp-n-1];
         if(is_closure(fn)){
+          if(n!=clo_nparams(fn)) return ERR;        // arity mismatch
           u32 vals=NIL; for(i32 k=(i32)vsp-1;k>=(i32)(vsp-n);k--) vals=cons(vstack[k],vals);
           u32 frame=cons(vals, clo_env(fn));
           vsp-=(n+1);
@@ -314,6 +336,7 @@ static void init(){
   for(u32 i=0;i<MAX_SYMS;i++) gval[i]=UNBOUND;
   s_quote=intern("quote",5); s_if=intern("if",2); s_define=intern("define",6);
   s_lambda=intern("lambda",6); s_let=intern("let",3); s_begin=intern("begin",5);
+  s_cond=intern("cond",4); s_else=intern("else",4);
   s_closure=intern("%closure",8);
   global_define(intern("nil",3),NIL); global_define(intern("t",1),TRUE);
   bindp("cons",mkspec(PR_CONS)); bindp("car",mkspec(PR_CAR)); bindp("cdr",mkspec(PR_CDR));

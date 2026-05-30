@@ -144,7 +144,7 @@ static u32 intern(const char* s, u32 len){
   return mksym(i);
 }
 
-static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin;
+static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_cond,s_else;
 
 // ---- reader (identical) ----------------------------------------------------
 static const char* rp;
@@ -281,8 +281,10 @@ static u32 reverse(u32 lst){
 // by the caller in R_save); no allocation happens between the car/cdr reads.
 static u32 bind_params(u32 fn, u32 args){
   u32 p=car(cdr(fn)), env=car(cdr(cdr(cdr(fn))));
-  for(u32 a=args; is_cons(p)&&is_cons(a); p=cdr(p),a=cdr(a))
+  u32 a=args;
+  for(; is_cons(p)&&is_cons(a); p=cdr(p),a=cdr(a))
     env=env_define(env,car(p),car(a));
+  if(is_cons(p) || is_cons(a)) return ERR;            // arity mismatch
   return env;
 }
 
@@ -311,8 +313,39 @@ static u32 eval_expr(u32 C, u32 E, u32 K){
     TAIL eval_expr(car(cdr(C)), E, k);
   }
   if(op==s_define){
-    u32 k = k_define(car(cdr(C)), K);
+    u32 head = car(cdr(C));
+    if(is_cons(head)){
+      // (define (f a b) body) -> name=f, val=(lambda (a b) body)
+      // params/body reachable via C (R_C). make_closure chains cons protection.
+      u32 name=car(head), params=cdr(head), body=car(cdr(cdr(C)));
+      u32 clo = make_closure(params, body, E);
+      global_define(name, clo);
+      TAIL return_val(name, 0, K);
+    }
+    u32 k = k_define(head, K);
     TAIL eval_expr(car(cdr(cdr(C))), E, k);
+  }
+  if(op==s_cond){
+    // Desugar (cond (t1 e1) ... [(else en)]) -> nested if; tail-feed to eval_expr.
+    // rev (reversed clause list) and expanded (in-progress nested-if) live in
+    // R_save; clause cells stay reachable via the rooted C and rev.
+    u32 base = R_ssp;
+    R_save[R_ssp++] = NIL;                            // [base+0] = rev
+    for(u32 c=cdr(C); is_cons(c); c=cdr(c))
+      R_save[base+0] = cons(car(c), R_save[base+0]);
+    R_save[R_ssp++] = NIL;                            // [base+1] = expanded
+    for(u32 c=R_save[base+0]; is_cons(c); c=cdr(c)){
+      u32 cl=car(c); u32 test=car(cl), body=car(cdr(cl));
+      if(test==s_else){
+        R_save[base+1] = body;
+      } else {
+        // (if test body expanded) — chained cons: each tmp protected as next gc_b.
+        R_save[base+1] = cons(s_if, cons(test, cons(body, cons(R_save[base+1], NIL))));
+      }
+    }
+    u32 expanded = R_save[base+1];
+    R_ssp = base;
+    TAIL eval_expr(expanded, E, K);
   }
   if(op==s_begin){
     u32 body=cdr(C);
@@ -398,6 +431,7 @@ static u32 return_val(u32 V, u32 _unused, u32 K){
         R_save[R_ssp++] = args;
         u32 E2 = bind_params(fn, args);
         R_ssp--;
+        if(E2==ERR) return ERR;                       // arity mismatch
         TAIL eval_expr(car(cdr(cdr(fn))), E2, next);
       }
       return ERR;
@@ -453,6 +487,8 @@ static void init(){
   s_lambda=intern("lambda",6);
   s_let   =intern("let",3);
   s_begin =intern("begin",5);
+  s_cond  =intern("cond",4);
+  s_else  =intern("else",4);
   s_closure=intern("%closure",8);
   g_head = cons(UNBOUND, NIL);
   g_env  = g_head;

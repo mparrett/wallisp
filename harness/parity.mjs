@@ -99,6 +99,25 @@ const PROGRAMS = [
 
   // comments
   '; comment\n(+ 2 40) ; trailing',
+
+  // arity check: under- and over-supply error; exact match still works.
+  '((lambda (x y) x) 1)',
+  '((lambda (x) x) 1 2)',
+  '((lambda (x y) (+ x y)) 1 2)',
+
+  // define-form shorthand: (define (name args...) body)
+  '(begin (define (sq x) (* x x)) (sq 9))',
+  '(begin (define (add a b) (+ a b)) (add 3 4))',
+  '(begin (define (fact n) (if (< n 1) 1 (* n (fact (- n 1))))) (fact 5))',
+
+  // cond: clause walk, else, no-else fallthrough, empty, and a recursive use
+  // that exercises GC re-entry through a cond-rewritten branch.
+  "(cond ((< 1 2) 'a) (else 'b))",
+  "(cond ((= 1 2) 'a) ((= 3 3) 'b) (else 'c))",
+  "(cond ((= 1 2) 'a) ((= 3 4) 'b))",
+  '(cond)',
+  "(begin (define (sgn n) (cond ((< n 0) -1) ((< 0 n) 1) (else 0))) (cons (sgn -7) (cons (sgn 0) (cons (sgn 9) nil))))",
+  '(begin (define (len l) (cond ((null? l) 0) (else (+ 1 (len (cdr l)))))) (len (quote (a b c d e))))',
 ];
 
 async function load(file) {
