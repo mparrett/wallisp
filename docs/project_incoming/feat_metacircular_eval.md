@@ -1,9 +1,38 @@
 ---
-status: proposed
-assigned: unassigned
+status: done
+assigned: claude-code
 created: 2026-05-29
+updated: 2026-05-29
+shipped: 2026-05-29
+shipped_in: baselines/metacircular.lisp, harness/bench.mjs, FINDINGS.md "Metacircular evaluator — Lisp-in-Lisp on each engine"
 ---
 # Feature: metacircular evaluator (`baselines/metacircular.lisp`)
+
+## Outcome (2026-05-29)
+
+Shipped. Two of three pre-registered predictions REFUTED — the more
+interesting outcome.
+
+  (a) bytecode_gc lands single-digit-to-low-tens-of-ms on meta-fib(10) →
+      **CONFIRMED**: 5.44 ms on meta-fib(12) on bytecode_gc.
+  (b) Engine ordering on meta matches direct → **REFUTED**: bytecode_gc
+      drops from 1st to 2nd (GC tax appears under heavy allocation);
+      lisp jumps from 5th to 3rd; lisp_region's H2 advantage shrinks.
+  (c) bytecode_gc / lisp_region ratio stays close → **REFUTED**: direct
+      0.83×, meta 0.45× — engine differences amplify ~2× on metacircular.
+
+Three findings sharpen: the metacircular tax varies 86×–294× by engine
+(not constant); bytecode's lead WIDENS under metacircular workload
+(1.3× → 3.6× over tree-walker, opposite of H4's mechanism); the GC tax
+flips sign on metacircular (bytecode_gc loses 69% to bytecode because
+the eval loop IS the allocator). Full writeup in FINDINGS.md
+"Metacircular evaluator — Lisp-in-Lisp on each engine."
+
+The Y-combinator approach worked cleanly — no engine surface changes
+needed. Number-vs-symbol detection via "unbound lookup → self-eval"
+worked as predicted in the design notes; no `number?` primitive added.
+
+---
 
 ## Summary
 

@@ -429,6 +429,109 @@ Allocator design notes
   to them for the mark-bit clear.
 - Module still has ZERO imports — runs in any wasm host via the embedding API.
 
+## Metacircular evaluator — Lisp-in-Lisp on each engine
+
+A tiny Lisp interpreter (`baselines/metacircular.lisp`) written in wallisp's
+own Lisp — `eval` / `apply` over an env-as-alist, recursion via Y combinator
+(we have no mutation, so we can't tie the env knot otherwise). Sits at the
+end of `harness/bench.mjs` as `meta-fib(12)`. The point is the new
+measurement axis: **interpretation on top of interpretation.**
+
+Pre-registered predictions from `feat_metacircular_eval.md`:
+
+- (a) `bytecode_gc` lands in single-digit-to-low-tens-of-ms on metacircular
+      fib(10).
+- (b) Engine ordering on metacircular fib matches ordering on direct fib
+      (because the metacircular evaluator IS the program in all cases).
+- (c) `bytecode_gc / lisp_region` ratio on metacircular ≈ direct ratio.
+
+Numbers, best-of-25, big-arena variants for the no-GC engines:
+
+| engine          | direct fib(12) | meta-fib(12) | metacircular tax |
+|-----------------|---------------:|-------------:|-----------------:|
+| lisp            |       0.047 ms |    11.53 ms  |   ~245×          |
+| lisp_trampoline |       0.046 ms |    12.92 ms  |   ~281×          |
+| lisp_gc         |       0.060 ms |    16.58 ms  |   ~277×          |
+| lisp_region     |       0.041 ms |    11.98 ms  |   ~294×          |
+| cek             |       0.087 ms |    19.90 ms  |   ~229×          |
+| cek_gc          |       0.130 ms |    30.59 ms  |   ~235×          |
+| bytecode        |       0.037 ms |     3.22 ms  |   ~**86×**       |
+| bytecode_gc     |       0.034 ms |     5.44 ms  |   ~**159×**      |
+
+Verdict:
+
+- **(a) CONFIRMED.** bytecode_gc at 5.4 ms on meta-fib(12), well within
+  the "single-digit to low-tens of ms" prediction. bytecode_gc IS fast
+  enough to host its own evaluator at a non-embarrassing speed.
+
+- **(b) REFUTED.** Engine ordering on metacircular is *not* the ordering
+  on direct fib:
+  - Direct (fastest→slowest): bytecode_gc, bytecode, lisp_region,
+    lisp_tramp, lisp, lisp_gc, cek, cek_gc.
+  - Meta   (fastest→slowest): bytecode, bytecode_gc, lisp, lisp_region,
+    lisp_tramp, lisp_gc, cek, cek_gc.
+  - Top-2 flip: bytecode_gc → bytecode (the GC engine LOSES to the
+    no-GC engine under metacircular workload).
+  - 3rd-place flip: lisp_region → lisp (the region-drop H2 advantage
+    shrinks relative to the other tree-walkers).
+
+- **(c) REFUTED.** `bytecode_gc / lisp_region` direct = 0.83×; meta = 0.45×.
+  Roughly 2× more spread between engines on metacircular than direct.
+  The metacircular workload AMPLIFIES engine differences — max/min on
+  direct fib(12) is 3.8×, on meta-fib(12) it's 9.5×.
+
+Three findings sharpen out of these refutations:
+
+**1. The metacircular tax varies 86×–294× by engine.** Not a constant. The
+spread tracks two axes: (a) dispatch shape under deep nested application
+(bytecode wins by a lot — its compiled-once `OP_CALL` machinery doesn't
+care that the recursion is mceval-shaped), and (b) allocation rate under
+heavy cons pressure (the metacircular eval cons's an env extension on
+every closure call). Engines that win on both axes (bytecode) pay the
+smallest tax; engines that lose on either (tree-walker family pays for
+dispatch, CEK pays for both) pay more.
+
+**2. Bytecode's lead WIDENS under metacircular workload.** Direct
+fib(12): bytecode is ~1.3× faster than the tree-walker. Metacircular
+fib(12): bytecode is ~3.6× faster than the tree-walker. The lever
+GROWS. This is the opposite of H4's "GC widens bytecode's lead by
+allocation pressure" mechanism: there, the widening was driven by
+collection cost interacting with engine shape. Here, the widening is
+driven by the workload itself becoming dispatch-heavier (every mceval
+call is a special-form-or-application decision; bytecode's compiled
+dispatch pays this once at compile time, tree-walkers pay it every step).
+
+**3. The GC tax flips sign on metacircular.** Direct fib(12):
+bytecode_gc beats bytecode by ~10% (no GC fires, the optimization-barrier
+tax is negligible at this size). Metacircular fib(12): bytecode_gc
+LOSES to bytecode by 69% (5.44 vs 3.22 ms). The metacircular workload
+allocates ~10× more than the direct workload (env extensions on every
+closure call, intermediate eval-list cons cells, closure tuples), and
+bytecode_gc fires its first real GC cycle. This is the H4 mechanism in
+its full form: the tax isn't collection time per se, it's the cost of
+having to assume `cons` could reach `gc()` from inside the hot mceval
+loop. On direct fib, that hot loop doesn't allocate, so the barrier
+is amortized to nothing; on metacircular, the hot loop IS the allocator.
+
+The third finding is also a small ratification of H2's mechanism. The
+no-GC tree-walker (`lisp`) at 11.53 ms slightly *beats* the region-drop
+(`lisp_region`) at 11.98 ms on metacircular — within noise, but
+suggesting region-drop's compare-with-zero advantage is in the
+direct-fib hot loop, not the metacircular loop. Each step of mceval
+allocates many intermediate cons cells (env extension, eval-list),
+and region-drop's bump pointer fills approximately as fast as
+lisp's. The H2 "below no-GC floor" effect needs a non-allocating
+hot loop to manifest; the metacircular eval is the opposite shape.
+
+What's the deeper takeaway? **Workload shape sets which engine
+axes matter.** Direct fib measures dispatch + a near-zero
+allocation rate; the engines order by dispatch quality. Metacircular
+fib measures dispatch ON TOP OF a heavy allocation rate; the
+engines order by *both*, which lets bytecode pull farther ahead and
+flips the bytecode_gc / bytecode ordering. The eight-engine suite
+doesn't have a single "fastest engine" — the answer depends on
+what the program is doing per step.
+
 ## OP_CALL primitive inlining in `bytecode_gc.c`
 
 bc_inline's runtime-checked fast path, ported into the finalist engine.

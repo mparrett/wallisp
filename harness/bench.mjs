@@ -14,6 +14,16 @@
 import fs from 'fs';
 import { spawnSync } from 'child_process';
 
+// Metacircular eval: same algorithm shape as the direct fib benchmark, but
+// run *through* a tiny Lisp interpreter written in wallisp's own Lisp. The
+// resulting tax (meta-fib / direct-fib) is "interpretation on top of
+// interpretation" — the cost of hosting an evaluator inside an evaluator.
+// fib(12) lands in the 3-30ms range; small enough to keep bench runtime
+// reasonable, large enough that noise doesn't dominate.
+const META_N = 12;
+const META_SRC = fs.readFileSync(new URL('../baselines/metacircular.lisp', import.meta.url), 'utf8')
+  .replace(/\b8\)\)/, `${META_N}))`);
+
 const ENGINES = [
   ['tree-walker', 'lisp_big.wasm',             false],
   ['TW_tramp',    'lisp_trampoline_big.wasm',  false],  // explicit while(TRUE) (H1)
@@ -60,6 +70,9 @@ const BENCHMARKS = [
    `(begin
       (define loop (lambda (i acc) (if (= i 0) acc (loop (- i 1) (+ acc i)))))
       (loop 30000 0))`],
+
+  [`meta-fib(${META_N})`, 'metacircular evaluator (Lisp-in-Lisp) running Y-combinator fib',
+   META_SRC],
 ];
 
 async function load(file) {

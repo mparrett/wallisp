@@ -7,6 +7,11 @@
 // any disagreement so CI catches engine drift.
 //
 //   node harness/parity.mjs
+//
+// Uses default-arena builds (the small *.wasm files), so programs here must
+// fit a 131K–262K cell heap. The metacircular evaluator in baselines/
+// allocates ~10× more than that and lives in harness/bench.mjs, which uses
+// the big-arena variants and cross-checks engine output the same way.
 
 import fs from 'fs';
 
