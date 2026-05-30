@@ -259,6 +259,8 @@ footer a { color: var(--ink-soft); border-bottom-color: var(--border); }
 
 <p>The project isn't a Lisp tutorial. It's a study in how interpreter design choices interact with their compilation substrate, told through eight implementations of the same evaluator.</p>
 
+<p>All eight engines export the same wasm ABI and agree byte-for-byte on a 43-program parity suite (<code>harness/parity.mjs</code>) &mdash; that's what keeps the A/B comparisons honest. They are deliberately minimal in the tinylisp/mal style: no arity checking, no type validation, no exhaustive error reporting. That keeps each engine in ~370&ndash;530 lines and the comparisons apples-to-apples; it also means this isn't a Lisp you'd embed in a product.</p>
+
 <h2><span class="section-num">1</span>What was built</h2>
 
 <p>Three evaluator architectures &times; three garbage-collection strategies, eight engines in the grid:</p>
