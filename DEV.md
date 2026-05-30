@@ -149,6 +149,27 @@ output length, read the result string at `output_ptr()`. `bytecode_gc.wasm` also
 exports `gc_count()`; the `bc_base/inline/super` builds export `icount()`
 (instructions dispatched). `harness/lisp-cli.mjs` is a minimal driver.
 
+### Bytecode disassembly + wasm inspection
+
+Two views into "what is the VM actually executing," answering different
+questions:
+
+- **VM bytecode (the inner IR).** `bash harness/disasm.sh` builds a
+  `disasm.wasm` variant of `bytecode_gc` that dumps the compiled `u32`
+  opcode stream instead of running it. `node harness/disasm.mjs <file>`
+  prints the listing (addresses + opcode names + decoded operands).
+  Build flag: `-DDISASM_ONLY -DOUTCAP=262144` in
+  `engines/bytecode_gc.c` — normal builds are byte-identical.
+- **Engine wasm (what V8 sees).** `brew install wabt` then `wasm2wat
+  bytecode_gc.wasm`. The big run-loop `switch` compiles to a single
+  `br_table` over 12 opcodes; each arm specializes independently in V8.
+
+See `docs/project_notes/bytecode_disasm.md` and `wasm_dispatch.md` for
+the writeup of what we found inspecting the metacircular eval. Notable:
+the bytecode-count share of `LOADG` looks alarmingly dominant (32%),
+but the wasm view shows V8 already specializes those arms tight — the
+env-lookup falsification (FINDINGS.md "Two surprises") generalizes.
+
 ### Native build
 
 `bash build.sh --native` produces `native_bench_<engine>` and

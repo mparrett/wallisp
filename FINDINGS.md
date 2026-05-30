@@ -551,6 +551,30 @@ and region-drop's bump pointer fills approximately as fast as
 lisp's. The H2 "below no-GC floor" effect needs a non-allocating
 hot loop to manifest; the metacircular eval is the opposite shape.
 
+### Bytecode shape — what the metacircular compiles to
+
+A follow-up question: what does mceval actually look like in the VM's
+own bytecode? Built a `DISASM_ONLY` variant of `bytecode_gc`
+(`engines/bytecode_gc.c`, `harness/disasm.sh`, `harness/disasm.mjs`) and
+dumped it. Direct fib(24) compiles to **60 words**; the metacircular
+evaluator to **810 words** — 13.5×, almost exactly tracking the source
+ratio (14.8×). Opcode mix is `LOADG`-dominated (32% of the listing),
+mostly the primitive symbols mcapply tests against in its nested-`if`
+dispatch ladder. Only 21 of 116 calls are `TAILCALL` (18%) — the
+eval/apply alternation IS tail at the outer edges, but the
+primitive-test ladder isn't, which is why the TCO win on meta-fib is
+~3% rather than the loop-shape would suggest.
+
+The `LOADG`-share is misleading at first glance — that's the same shape
+of armchair argument the env-lookup hotspot hypothesis (above) made for
+the tree-walker, where the speedup turned out to be ~5%. The wasm view
+(via `wasm2wat`, dispatch loop is a tight 12-arm `br_table`) confirms
+V8 already specializes the LOADG arm hard. Filed in
+`docs/project_notes/bytecode_disasm.md` and `wasm_dispatch.md` with
+both snapshots; "would a faster mcapply primitive dispatch actually
+help?" is left as a pre-registered prediction (we predict <10% speedup)
+rather than a recommendation.
+
 What's the deeper takeaway? **Workload shape sets which engine
 axes matter.** Direct fib measures dispatch + a near-zero
 allocation rate; the engines order by dispatch quality. Metacircular

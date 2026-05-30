@@ -426,7 +426,12 @@ static void init(){
 }
 
 // ---- printer (identical) ---------------------------------------------------
+// Output buffer. Override at build time (e.g., -DOUTCAP=262144 for the
+// disasm variant, where the bytecode listing is much larger than any
+// program result we'd otherwise print).
+#ifndef OUTCAP
 #define OUTCAP 4096
+#endif
 static char outbuf[OUTCAP]; static u32 outlen;
 static void oemit(char c){ if(outlen<OUTCAP)outbuf[outlen++]=c; }
 static void emits(const char*s){ while(*s)oemit(*s++); }
@@ -468,8 +473,42 @@ u32 eval_source(u32 len){
   }
   if(!any){ print_val(NIL); return outlen; }
   emit(OP_HALT);
+#ifdef DISASM_ONLY
+  // Build with -DDISASM_ONLY -DOUTCAP=262144 to dump the compiled bytecode
+  // instead of executing. Used by harness/disasm.sh + harness/disasm.mjs to
+  // inspect what the compiler emits for a given source program. See
+  // docs/project_notes/bytecode_disasm.md and FINDINGS.md "Bytecode shape".
+  u32 p=0;
+  while(p<cp){
+    u32 addr=p;
+    if(addr<10){oemit(' ');oemit(' ');oemit(' ');}
+    else if(addr<100){oemit(' ');oemit(' ');}
+    else if(addr<1000){oemit(' ');}
+    emitint((i32)addr); emits(": ");
+    u32 op=code[p++];
+    switch(op){
+      case OP_CONST:    emits("CONST    "); print_val(code[p++]); break;
+      case OP_LOADL:    emits("LOADL    d="); emitint(code[p++]); emits(" i="); emitint(code[p++]); break;
+      case OP_LOADG:    emits("LOADG    "); { u32 i=code[p++]; for(u32 k=0;k<symlen[i];k++)oemit(symname[i][k]); } break;
+      case OP_DEFG:     emits("DEFG     "); { u32 i=code[p++]; for(u32 k=0;k<symlen[i];k++)oemit(symname[i][k]); } break;
+      case OP_POP:      emits("POP"); break;
+      case OP_JMP:      emits("JMP      -> "); emitint(code[p++]); break;
+      case OP_JFALSE:   emits("JFALSE   -> "); emitint(code[p++]); break;
+      case OP_CLOSURE:  emits("CLOSURE  body="); emitint(code[p++]); emits(" nparams="); emitint(code[p++]); break;
+      case OP_CALL:     emits("CALL     n="); emitint(code[p++]); break;
+      case OP_TAILCALL: emits("TAILCALL n="); emitint(code[p++]); break;
+      case OP_RET:      emits("RET"); break;
+      case OP_HALT:     emits("HALT"); break;
+      default:          emits("???      "); emitint((i32)op); break;
+    }
+    oemit('\n');
+  }
+  emits("\n; --- bytecode total: "); emitint((i32)cp); emits(" words ---\n");
+  return outlen;
+#else
   gc_enabled=1;            // compile done; collect during execution
   u32 result=run(0);
   print_val(result);
   return outlen;
+#endif
 }

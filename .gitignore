@@ -14,3 +14,6 @@ bc_super.wasm
 # Native binaries (Mach-O / ELF, platform-specific)
 native_bench_*
 native_cli_*
+
+# Disasm variant — built on demand via `bash harness/disasm.sh`
+disasm.wasm
