@@ -83,6 +83,44 @@ Two framings we picked up from reading the guide:
    the prerequisites existed. mal makes the deferral explicit. Not action,
    just framing worth noticing.
 
+## William E. Byrd — "The Most Beautiful Program Ever Written"
+
+Talk digest filed 2026-05-29 (originally `lisp-in-lisp.md` in the inbox).
+Byrd's framing: a tiny metacircular Lisp interpreter (eval/apply in Lisp,
+environments-as-procedures) is "Maxwell's equations of software" — small
+enough to fit on a 4×6 card, yet exposing the deep structure of computation
+(scope, closures, recursion, evaluation strategy, continuations,
+synthesis).
+
+The talk lives at the *semantics* level (what the interpreter denotes,
+how transformations like CPS / store / lazy eval / dynamic scope let you
+explore language design from the same minimal core). wallisp lives at the
+*implementation* level (what the interpreter costs once it hits clang,
+wasm, V8, and a fixed cell arena). Different axes.
+
+**One framing worth lifting — the metacircular evaluator as a benchmark.**
+Writing a tiny Lisp-in-Lisp and running it on each of our eight engines
+gives a new measurement: the substrate cost of *interpretation on top of
+interpretation*. It tests whether `bytecode_gc` is fast enough to host
+its own evaluator at a non-embarrassing speed, and whether the engine
+ordering on direct fib mirrors the ordering on metacircular fib. The
+constant-vs-varying-tax question is the empirical hook.
+
+- See `docs/project_incoming/feat_metacircular_eval.md`
+
+What we are *not* lifting from the talk:
+
+- **Environment-as-procedure representation.** Beautiful at the semantics
+  level; not portable to our wasm implementation level (env in wallisp is
+  a cons-chain reached by lexical address, not a first-class function).
+- **miniKanren / relational interpretation.** Genuinely interesting but
+  a different project — relational evaluation needs unification and a
+  search engine on top of the language, which is bigger than wallisp.
+- **Barliman / program synthesis.** Same — downstream of miniKanren.
+- **CPS-transform the engines.** CEK already lives in that neighborhood
+  semantically (continuations as data); duplicating the framing wouldn't
+  add a measurement axis we don't have.
+
 ## What we explicitly chose NOT to take
 
 - **mal's 11-step pedagogical structure.** Good for "learn to write a Lisp,"

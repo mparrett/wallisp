@@ -257,7 +257,7 @@ footer a { color: var(--ink-soft); border-bottom-color: var(--border); }
 
 <p><strong>wallisp</strong> is a tiny Lisp implemented eight ways in freestanding C, compiled to WebAssembly with zero imports, and driven by measurement to a finalist: a bytecode VM with tail-call optimization and a hand-rolled mark-sweep GC. Along the way, four pre-registered hypotheses were tested and most of them got refuted &mdash; including some that looked obviously correct on paper.</p>
 
-<p>The project isn't a Lisp tutorial. It's a study in how interpreter design choices interact with their compilation substrate, told through eight implementations of the same evaluator.</p>
+<p>The project isn't a Lisp tutorial. It's a study in how interpreter design choices interact with their compilation substrate, told through eight implementations of the same evaluator. A tiny Lisp is the smallest complete lab for programming-language implementation; this one treats the lab like science instead of nostalgia.</p>
 
 <p>All eight engines export the same wasm ABI and agree byte-for-byte on a 43-program parity suite (<code>harness/parity.mjs</code>) &mdash; that's what keeps the A/B comparisons honest. They are deliberately minimal in the tinylisp/mal style: no arity checking, no type validation, no exhaustive error reporting. That keeps each engine in ~370&ndash;530 lines and the comparisons apples-to-apples; it also means this isn't a Lisp you'd embed in a product.</p>
 
