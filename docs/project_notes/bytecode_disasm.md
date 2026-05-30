@@ -106,8 +106,17 @@ rate are visible in the bytecode shape; the engine-ordering shift is
 just those two factors hitting each engine's specialization profile
 differently.
 
-## Snapshot
+## Reproducing the snapshot
 
-A captured copy of the full metacircular bytecode disasm lives at
-`bytecode_disasm.meta.txt` next to this file. Re-generate with the
-commands above if the metacircular source changes.
+The full metacircular bytecode listing isn't committed (regenerable, would
+go stale). To capture a copy next to this file:
+
+```bash
+bash harness/disasm.sh
+node harness/disasm.mjs baselines/metacircular.lisp \
+  > docs/project_notes/bytecode_disasm.meta.txt
+wc -l docs/project_notes/bytecode_disasm.meta.txt   # expect ~374 lines
+```
+
+The file is gitignored; re-run any time `baselines/metacircular.lisp`
+changes if you want a fresh reference snapshot.

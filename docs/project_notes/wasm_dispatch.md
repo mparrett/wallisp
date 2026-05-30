@@ -24,6 +24,23 @@ opcode. The 12 opcodes are CONST, LOADL, LOADG, DEFG, POP, JMP, JFALSE,
 CLOSURE, CALL, TAILCALL, RET, HALT (see the enum at
 `engines/bytecode_gc.c:178`).
 
+## Reproducing the snapshot
+
+The wat excerpt isn't committed (line numbers shift across clang
+versions). To capture the dispatch block next to this file, find the
+largest `br_table` (the 12-arm one) and grab ~90 lines around it:
+
+```bash
+wasm2wat bytecode_gc.wasm > /tmp/bytecode_gc.wat
+# Locate the br_table with the most targets — that's the VM dispatch.
+LINE=$(awk '/br_table/{if(NF>max){max=NF;ln=NR}} END{print ln}' /tmp/bytecode_gc.wat)
+sed -n "$((LINE-15)),$((LINE+75))p" /tmp/bytecode_gc.wat \
+  > docs/project_notes/wasm_dispatch.excerpt.wat
+```
+
+Pattern-based, not line-anchored, so it survives clang updates and
+unrelated engine edits. The file is gitignored.
+
 ## What we found
 
 clang at `-O2` compiles the run loop's `switch(op){case OP_X: ...}` into

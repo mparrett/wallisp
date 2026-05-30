@@ -17,3 +17,8 @@ native_cli_*
 
 # Disasm variant — built on demand via `bash harness/disasm.sh`
 disasm.wasm
+
+# Disasm + wasm-dispatch snapshots in project_notes/ — regenerable from the
+# tools above; commit only the writeup .md files, not the captured output.
+docs/project_notes/bytecode_disasm.meta.txt
+docs/project_notes/wasm_dispatch.excerpt.wat
