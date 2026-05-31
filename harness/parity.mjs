@@ -26,6 +26,17 @@ const ENGINES = [
   'bytecode_gc.wasm',
 ];
 
+// PR1 (primitive validation + variadic +/-/*  + / + mod + 30-bit overflow
+// trap) is being rolled out engine-by-engine; PR1a pilots on lisp.wasm.
+// Engines in this set must match the expected output in PR1_PROGRAMS. The
+// rest still produce older behaviour (e.g. (+ 1 2 3) -> 3 because they
+// silently dropped trailing args, (+ 1) -> 1, division wasn't a prim).
+// When all engines ship PR1, fold PR1_PROGRAMS back into PROGRAMS and
+// delete this gate.
+const SUPPORTS_PR1 = new Set([
+  'lisp.wasm',
+]);
+
 // Programs cover: numeric arithmetic, list ops, quote, cond/if, let, lambda,
 // closures, recursion (tail and non-tail), mutual recursion, primitive
 // rebinding (must defeat any inline-prim shortcut), edge cases on car/cdr.
@@ -33,9 +44,8 @@ const ENGINES = [
 // answer" — we use the tree-walker (lisp.wasm) as the reference and require
 // all seven others to agree with it.
 const PROGRAMS = [
-  // arithmetic
-  '(+ 1 2 3)',
-  '(- 100 7 3)',
+  // arithmetic — binary only at this layer; variadic +/-/* moved to
+  // PR1_PROGRAMS below (semantics differ pre/post PR1).
   '(* 6 7)',
   '(+ (* 2 3) (- 10 4))',
   '(= 0 0)',
@@ -120,6 +130,66 @@ const PROGRAMS = [
   '(begin (define (len l) (cond ((null? l) 0) (else (+ 1 (len (cdr l)))))) (len (quote (a b c d e))))',
 ];
 
+// Programs whose expected output depends on PR1 semantics. Only checked
+// against engines in SUPPORTS_PR1; non-PR1 engines produce older behaviour
+// for these inputs (variadic +/-/* silently dropped trailing args; (+ 1)
+// returned 1; / and mod weren't bound; arithmetic silently wrapped at
+// 30 bits). Each entry is [source, expected_output]. Fold back into
+// PROGRAMS as cross-checks once every engine ships PR1.
+const PR1_PROGRAMS = [
+  // variadic + / - / * (was binary-only on non-PR1 engines)
+  ['(+ 1 2 3)',        '6'],
+  ['(- 100 7 3)',      '90'],
+  ['(* 2 3 4)',        '24'],
+  // arity errors on primitives
+  ['(+)',              '<error>'],
+  ['(+ 1)',            '<error>'],
+  ['(-)',              '<error>'],
+  ['(- 1)',            '<error>'],
+  ['(*)',              '<error>'],
+  ['(cons)',           '<error>'],
+  ['(cons 1)',         '<error>'],
+  ['(cons 1 2 3)',     '<error>'],
+  ['(car)',            '<error>'],
+  ['(cdr 1 2)',        '<error>'],
+  ['(=)',              '<error>'],
+  ['(= 1)',            '<error>'],
+  ['(< 1)',            '<error>'],
+  ['(null?)',          '<error>'],
+  ['(null? 1 2)',      '<error>'],
+  // type errors on primitives
+  ["(+ 'a 1)",         '<error>'],
+  ["(- 1 'a)",         '<error>'],
+  ["(* 'a 'b)",        '<error>'],
+  ['(car 5)',          '<error>'],
+  ['(car nil)',        '<error>'],
+  ['(cdr 5)',          '<error>'],
+  ["(< 'a 'b)",        '<error>'],
+  // = stays polymorphic identity — metacircular evaluator depends on it
+  ["(= 'a 'a)",        't'],
+  ["(= 'a 'b)",        '()'],
+  ['(= nil nil)',      't'],
+  // new ops: / and mod, including divide-by-zero
+  ['(/ 6 2)',          '3'],
+  ['(/ 7 2)',          '3'],
+  ['(/ -7 2)',         '-3'],   // C truncation toward zero
+  ['(/ 1 0)',          '<error>'],
+  ['(/)',              '<error>'],
+  ['(/ 5)',            '<error>'],
+  ['(mod 7 3)',        '1'],
+  ['(mod -7 3)',       '-1'],   // C remainder semantics
+  ['(mod 1 0)',        '<error>'],
+  ['(mod 5)',          '<error>'],
+  // 30-bit overflow trap
+  ['(+ 536870900 100)',     '<error>'],
+  ['(- -536870900 100)',    '<error>'],
+  ['(* 100000 100000)',     '<error>'],
+  ['(* 23000 23000)',       '529000000'],  // fits (5.29e8 < 5.37e8)
+  ['(+ 536870910 1)',       '536870911'],  // FIX_MAX boundary OK
+  ['(+ 536870911 1)',       '<error>'],
+  ['(/ -536870912 -1)',     '<error>'],    // FIX_MIN / -1 = FIX_MAX+1
+];
+
 async function load(file) {
   const { instance } = await WebAssembly.instantiate(fs.readFileSync(new URL('../' + file, import.meta.url)), {});
   const ex = instance.exports, mem = ex.memory;
@@ -156,7 +226,27 @@ const main = async () => {
     }
   }
   console.log(`\n${programs - failures}/${programs} programs agree across all ${engines.length} engines`);
-  if (failures) process.exit(1);
+
+  // PR1: assert PR1-supporting engines match the expected output. During
+  // rollout (PR1a/PR1b) this catches regressions in piloted engines without
+  // requiring the others to keep up.
+  const pr1Engines = engines.filter(([f]) => SUPPORTS_PR1.has(f));
+  let pr1Failures = 0;
+  console.log(`\nPR1 programs against ${pr1Engines.length} engine(s): ${pr1Engines.map(([f]) => f).join(', ')}`);
+  for (const [src, want] of PR1_PROGRAMS) {
+    for (const [name, run] of pr1Engines) {
+      const got = run(src);
+      if (got !== want) {
+        pr1Failures++;
+        console.log(`PR1 FAIL  ${name.padEnd(24)} ${JSON.stringify(src).slice(0, 50)}`);
+        console.log(`  expected ${JSON.stringify(want)}`);
+        console.log(`  got      ${JSON.stringify(got)}`);
+      }
+    }
+  }
+  console.log(`${PR1_PROGRAMS.length * pr1Engines.length - pr1Failures}/${PR1_PROGRAMS.length * pr1Engines.length} PR1 assertions passed`);
+
+  if (failures || pr1Failures) process.exit(1);
 };
 
 main().catch(e => { console.error(e); process.exit(1); });

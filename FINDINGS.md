@@ -1279,3 +1279,99 @@ would need the explicit trampoline; for us, the two are interchangeable.
 - No new findings, no surprises. This is a null result by design — the
   experiment was set up to verify a framing claim, not to find anything
   new. The clean confirmation IS the result.
+
+## PR1a — primitive validation tax on the tree-walker (`lisp.c`)
+
+The audit in `docs/project_notes/legs_vs_toy_audit.md` called out the
+"silent garbage on bad prim args" footgun: `(+ 1)` → `1`, `(+ 'a 1)` → empty,
+`(car 5)` → `()`. The PR1 series fixes this across all eight engines; PR1a
+is the pilot on `lisp.c` alone, with `harness/parity.mjs` gating the new
+error/op programs to PR1-shipped engines via `SUPPORTS_PR1`.
+
+PR1a adds, all in `engines/lisp.c`:
+- Arity checks on every primitive (inline, no `list_len()` walk —
+  first draft had one, cost ~13% fib(24); folded).
+- Operand type checks (`is_fix` on arithmetic, `is_cons` on `car`/`cdr`).
+  `=` deliberately stays polymorphic — the metacircular evaluator uses
+  `(= 'quote 'quote)` for symbol identity.
+- 30-bit overflow trap on `+`/`-`/`*`/`/`. Closes the
+  "Gotcha: fixnums are 30-bit, not 32-bit" hazard above for any program
+  that actually overflows.
+- New primitives `/` (truncating div) and `mod`, with divide-by-zero error.
+- Variadic `+`/`-`/`*` with ≥2 args. The binary case stays on i32 with a
+  single `fits_fix` check; only the rare 3+ arg path promotes to i64.
+
+### Pre-registered prediction (from `gap_closure_plan.md`)
+
+- (a) No measurable bench regression on the existing 5-benchmark suite.
+  New checks were predicted to be "integer compares on the cold prim path."
+  Hard falsification: >3% slowdown on `bytecode_gc` fib(24) wasm (PR1b gate).
+- (b) Parity holds at 53-program count (after moving the 2 changed-semantics
+  programs to `PR1_PROGRAMS`) plus 45 new PR1 assertions on `lisp.wasm`.
+- (c) `bc_super` remains the only divergent engine.
+- (d) PR1b reveals zero new GC root issues.
+
+### Measured (best-of-25, 16M-cell arena for `lisp_big.wasm`, 3 runs)
+
+| benchmark      | lisp_big (PR1a) | lisp_trampoline_big (no PR1) | ratio (PR1a / no-PR1) |
+|----------------|-----------------|------------------------------|------------------------|
+| fib(24)        | 15.54 ms        | 14.17 ms                     | 1.10×                  |
+| tak(18,12,6)   |  6.62 ms        |  6.45 ms                     | 1.03×                  |
+| tailsum(30000) |  4.04 ms        |  3.69 ms                     | 1.10×                  |
+
+Variance across 3 runs: ≤ 0.07 ms per cell. The ratio is stable, not noise.
+`lisp_region_big.wasm` (also no PR1) lands at essentially the same numbers
+as `lisp_trampoline_big`, confirming the comparison.
+
+Parity unchanged: 53/53 cross-engine programs agree; 45/45 PR1 assertions
+pass on `lisp.wasm`; `test_bc.mjs` still 70/70; metacircular fib(8) on
+`lisp_big.wasm` returns `21`.
+
+### Result against the predictions
+
+(a) **Partially falsified.** The hard falsification gate (`bytecode_gc` fib
+    >3%) wasn't tested — PR1a didn't touch `bytecode_gc`. But the broader
+    "no measurable regression" claim is false on the tree-walker:
+    ~10% on the two prim-heavy shapes (fib, tailsum). The *mechanism* in the
+    prediction — "integer compares on the cold prim path" — was wrong on
+    the tree-walker specifically.
+
+(b) **Confirmed.** 53/53 + 45/45 as predicted.
+
+(c) **Confirmed** (no `bc_super` work in PR1a).
+
+(d) Not testable until PR1b.
+
+### What the data says — sharpening the PR1b prediction
+
+The tree-walker has **no inline-prim fast path**. Every `(+ x y)` in the
+program goes through `apply_prim`'s full dispatch + arity + type + overflow
+chain. fib(24) does ~184k primitive calls (4 per iteration × 46k
+iterations); a ~10-cycle increase per call lands at ~10% wall-clock.
+
+`bytecode_gc.c`, by contrast, has the inline-prim fast path documented in
+the "OP_CALL primitive inlining" section above (1.16× speedup pre-PR1).
+That fast path covers the five arithmetic ops (`+ - * = <`) at runtime,
+*bypassing* `apply_prim` entirely on the hot loop. PR1b's challenge is
+keeping the validation inside the inline-prim arms without breaking V8's
+specialization.
+
+**Sharpened PR1b prediction:** `bytecode_gc` fib(24) regression should be
+**substantially below 10%**, because the validation goes into the inline-
+prim arms rather than a path the hot loop goes through. If it lands at the
+tree-walker's ~10% anyway, V8 has lost specialization on the inline-prim
+arms — and the per-engine GC-tax ordering (`bytecode_gc` 1.05× /
+`lisp_gc` 1.34× / `cek_gc` 1.83×) predicts a similar amplification pattern
+on PR1c (`cek_gc`'s tight musttail loop being V8's sweet spot makes it the
+most JIT-sensitive substrate for new checks).
+
+### Falsification log
+
+- (a) partially falsified on the tree-walker as documented above. The
+  pre-registered mechanism was wrong; the corrected mechanism (prim path
+  is hot, not cold, on engines without inline-prim fast paths) is what
+  PR1b will test.
+- (b)/(c) confirmed.
+- New finding: the variance between engines' susceptibility to PR1
+  overhead will follow the same "JIT-specializability" ordering that
+  governs the GC tax (H4). Worth checking at PR1c.
