@@ -100,11 +100,16 @@ FINDINGS.md for the full story.
   any function call; an additional small win comes from the lighter
   compare shape (`sp == 0` vs `cell_top >= MAX_CELLS`).
 
-- **`cek.c`** — CEK's headline feature was redundant. 2.2× slower than
-  the tree-walker on fib; the only axis it exclusively wins is deep
-  *non-tail* recursion. The expensive capability is real (`sum(10000)`
-  works on CEK, blows the C stack on the tree-walker), but it cost a
-  2.2× speed penalty and ~130 lines of machine to acquire.
+- **`cek.c`** — CEK's headline features were both redundant. 2.2× slower
+  than the tree-walker on fib; the only axis it exclusively wins is deep
+  *non-tail* recursion (`sum(10000)` works on CEK, blows the C stack on
+  the tree-walker). The fib tax understates the dispatch gap on heavily
+  tail-looping shapes (EXP2 measured 7.7× vs `bytecode_gc` on a 2K-iter
+  loop). EXP2 also tested whether exposing K as `call/cc` is a hidden
+  speed win — falsified, 23× slower than `bytecode_gc` on a generator
+  benchmark. `call/cc` itself is cheap (1.37× marginal); the generator
+  idiom defeats CEK's internal control-flow amortization. CEK still has
+  no benchmark where it exclusively wins on speed.
 
 - **`cek_gc.c`** — H4 with the highest GC tax (~1.83× wasm). Established
   that V8's amplification of the H2 optimization barrier scales with
@@ -119,12 +124,15 @@ FINDINGS.md for the full story.
   dispatch, env lookup via lexical address, no consed arg lists on the
   hot path). The single highest-leverage change in the project.
 
-- **`bytecode_gc.c`** — the finalist. Smallest mark-sweep tax of the
-  three GC engines (~1.05× wasm) because the switch dispatch has many
-  cons-free arms V8 can keep specializing. Inline-prims fast path
-  bypasses cons-and-apply_prim for 2-arg arithmetic at runtime,
-  preserving correctness under `(define +)` redefinition while
-  eliminating most of the remaining tax. The shippable engine.
+- **`bytecode_gc.c`** — the finalist, and post-PR1 the engine to beat on
+  prim-density-bound shapes. Headline tax of ~1.05× wasm vs the no-GC
+  `bytecode` *flipped sign on fib post-PR1c*: `bytecode_gc` now runs
+  fib(24) slightly *faster* than `bytecode` because the inline-prim
+  fast path absorbs PR1's per-op validation while the no-inline engines
+  pay it twice. Inline-prims bypass cons-and-apply_prim for 2-arg
+  arithmetic at runtime, preserving correctness under `(define +)`
+  redefinition while eliminating most of the remaining GC tax. The
+  shippable engine.
 
 ## Tradeoffs in two lines
 
