@@ -33,6 +33,7 @@ const ENGINES = [
 // back into PROGRAMS and delete this gate (same pattern as PR1).
 const SUPPORTS_PR2 = new Set([
   'lisp.wasm',
+  'bytecode_gc.wasm',
 ]);
 
 const PR2_PROGRAMS = [

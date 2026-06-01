@@ -1667,3 +1667,133 @@ mutation, no GC interaction in tree-walker, will need GC-root care in
 PR2b/c for the GC engines). The pre-registered prediction is a
 *correctness* gate (memoised fib speedup), not a *performance*
 hypothesis to falsify.
+
+## PR2b — mutation on `bytecode_gc.c` (the falsification gate)
+
+Ports PR2a to `engines/bytecode_gc.c`, the hardest substrate
+(mark-sweep GC, bytecode dispatch, V8-specialized inline-prim arms).
+This is the falsification gate from `gap_closure_plan.md`: memoised
+fib must beat unmemoised by ≥10× at N=20, or there's a `set!`
+correctness bug.
+
+Design:
+- Two new opcodes: **`OP_SETL d i`** (mutate local — walk d frames, walk
+  i into frame's values list, mutate the cons cell's car) and
+  **`OP_SETG s`** (mutate global, error if previously unbound). Both
+  leave the assigned value on the operand stack.
+- `compile()` for `(set! sym expr)`: emit value, then OP_SETL or
+  OP_SETG depending on whether `resolve()` finds `sym` in the lexical
+  env. Strict arity 2 at compile time.
+- `apply_prim` gains `PR_SETCAR` / `PR_SETCDR` cases (same shape as
+  lisp.c). Outside the inline-prim range, so they go through
+  apply_prim — fine because they're rarely on a hot prim-density path.
+- GC discipline: `scan_code` updated so the GC walker knows the new
+  opcodes' operand widths (OP_SETL: 2 operands, OP_SETG: 1). Critical —
+  miscounting makes GC misread the bytecode stream as quoted-data
+  pointers.
+- No new GC roots needed: `OP_SETL` mutates a cell already reachable
+  through `R_env`; `OP_SETG` writes into `gval[]` (a root array);
+  `PR_SETCAR` / `PR_SETCDR` mutate cells already reachable through
+  the operand stack args. The mutated value also came from the operand
+  stack, so it was reachable before and after.
+
+### Pre-registered predictions (from `gap_closure_plan.md`)
+
+- (a) Memoised fib(20) beats unmemoised by **≥10×** on `bytecode_gc`.
+      Falsification: <10× speedup means `set-car!` isn't actually
+      mutating (a silent correctness bug).
+- (b) Engine ordering on the existing 5-benchmark suite unchanged.
+- (c) GC root-set complete: `set-car!` writing a fresh cons that points
+      to a fresh cons survives a forced collection.
+
+### Measured (bytecode_gc.wasm, best-of-15 / best-of-25)
+
+**Prediction (a): memoised vs unmemoised fib(20).**
+
+```scheme
+; unmemo: classic recursive fib
+(begin (define fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))) (fib 20))
+
+; memo: 21-cell cache, -1 means "not yet computed", mfib via set-car!
+(begin
+  (define mk (lambda (n) (if (= n 0) nil (cons (- 0 1) (mk (- n 1))))))
+  (define tail (lambda (l n) (if (= n 0) l (tail (cdr l) (- n 1)))))
+  (define cache (mk 21))
+  (define mfib (lambda (n) (if (< n 2) n
+    (let ((slot (tail cache n)))
+      (if (= (car slot) -1)
+          (let ((v (+ (mfib (- n 1)) (mfib (- n 2)))))
+            (begin (set-car! slot v) v))
+          (car slot))))))
+  (mfib 20))
+```
+
+| program            | result | ms     |
+|--------------------|--------|--------|
+| unmemo fib(20)     | 6765   | 1.202  |
+| memo   fib(20)     | 6765   | 0.038  |
+| **speedup**        |        | **31.6×** |
+
+**Confirmed at 3.16× of the gate.** Both produce the correct value
+(6765 = fib(20)), so the cache is being read on cache-hits and written
+on cache-misses. The 31× factor is consistent with the ~21891-call
+unmemoised tree being collapsed to 21 cached values × ~3 prim calls
+each = ~60 calls. The actual ratio came in a bit smaller than the
+pure call-count ratio (~365×) because the cache walk (`tail` walks the
+list to position n) adds linear overhead per lookup.
+
+**Prediction (c): GC stress test.**
+
+```scheme
+(begin
+  (define a (cons (cons 100 200) (cons 300 400)))
+  (define b (cons (cons 11 22) (cons 33 44)))
+  (set-car! a (car b))                       ; a's car -> fresh inner cons
+  (set-cdr! a (cdr b))                       ; a's cdr -> fresh inner cons
+  ; thrash the arena to force GC
+  (define waste (lambda (n) (if (= n 0) nil
+    (begin (cons 0 0) (cons 1 1) (cons 2 2) (cons 3 3) (waste (- n 1))))))
+  (waste 800000)
+  ; every leaf of a should be the post-mutation b values
+  (cons (car (car a)) (cons (cdr (car a)) (cons (car (cdr a)) (cons (cdr (cdr a)) nil)))))
+;; -> (11 22 33 44), with gc_count() = 42
+```
+
+**Confirmed.** 42 GC cycles fired during the 3.2M-cons workload;
+every leaf of `a` is intact. The mutated structure stayed reachable
+through `gval[a]` and was correctly marked-and-not-swept across every
+collection.
+
+**Prediction (b): no bench regression.**
+
+| benchmark | bytecode_gc pre-PR2b | bytecode_gc PR2b | ratio |
+|-----------|----------------------|-------------------|-------|
+| fib(24)   | ~7.4 ms              | 7.19 ms           | 0.97× |
+
+Confirmed within noise.
+
+Parity unchanged: 98/98 cross-engine PR1 programs agree; 38/38 PR2
+assertions pass on {lisp.wasm, bytecode_gc.wasm}; 70/70 test_bc.mjs;
+freestanding property preserved.
+
+### Result against predictions
+
+- (a) **Confirmed at 31.6×** (gate ≥10×). Memoisation works end-to-end:
+  `set-car!` mutates, the mutation is visible to subsequent reads,
+  the cached values produce the same answer as the recursive form.
+- (b) **Confirmed within noise** (7.19ms vs ~7.4ms pre-PR2b).
+- (c) **Confirmed.** 42 GC cycles, every link intact.
+
+### Falsification log
+
+- All three pre-registered predictions confirmed within or above gate.
+- No surprises: the bytecode port introduced no new GC root concerns,
+  which matches the apply_prim/no-allocation analysis upfront.
+- PR2c (mechanical port to remaining 6 engines) will likely surface
+  one new question — `lisp_region.c` is the only engine with a
+  fundamentally different reclamation model (region-drop, not
+  mark-sweep). The invariant region-drop relies on (env is the bottom
+  of a downward arena) is preserved by `set!` because mutation
+  doesn't change arena indices, but `set-car!` writing a *fresh*
+  cons into an *older* cell might violate "older cells point only
+  downward" — worth checking at PR2c.
