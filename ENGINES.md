@@ -31,18 +31,23 @@ taught us" below).
 
 | engine            | arch         | GC         | lines | arena (default) | fib(24) native ms | fib(24) wasm ms | vs `bytecode_gc` wasm |
 |-------------------|--------------|------------|-------|-----------------|-------------------|-----------------|------------------------|
-| `lisp.c`          | tree-walker  | none       |   370 |    131K cells   |  10.918           | 13.301          | 1.81×                  |
-| `lisp_trampoline.c`| tree-walker | none       |   390 |    131K cells   |  11.013           | 13.502          | 1.84×                  |
-| `lisp_region.c`   | tree-walker  | region-drop|   409 |    262K cells   |  10.811           | 12.577          | 1.71×                  |
-| `lisp_gc.c`       | tree-walker  | mark-sweep |   506 |    262K cells   |  14.894           | 18.835          | 2.57×                  |
-| `cek.c`           | CEK          | none       |   455 |    131K cells   |  24.303           | 27.163          | 3.70×                  |
-| `cek_gc.c`        | CEK          | mark-sweep |   530 |    262K cells   |  32.159           | 51.098          | 6.97×                  |
-| `bytecode.c`      | bytecode     | none       |   370 |    262K cells   |   5.188           |  7.211          | 0.98×                  |
-| `bytecode_gc.c`   | bytecode     | mark-sweep |   475 |    262K cells   |   5.107           |  7.333          | 1.00× (anchor)         |
+| `lisp.c`          | tree-walker  | none       |   457 |    131K cells   |  12.86            | 16.83           | 1.90×                  |
+| `lisp_trampoline.c`| tree-walker | none       |   463 |    131K cells   |  13.63            | 16.96           | 1.91×                  |
+| `lisp_region.c`   | tree-walker  | region-drop|   479 |    262K cells   |  13.44            | 15.95           | 1.80×                  |
+| `lisp_gc.c`       | tree-walker  | mark-sweep |   590 |    262K cells   |  16.61            | 22.59           | 2.55×                  |
+| `cek.c`           | CEK          | none       |   530 |    131K cells   |  27.81            | 34.58           | 3.90×                  |
+| `cek_gc.c`        | CEK          | mark-sweep |   617 |    262K cells   |  33.49            | 62.93           | 7.10×                  |
+| `bytecode.c`      | bytecode     | none       |   451 |    262K cells   |   5.92            |  9.33           | 1.05×                  |
+| `bytecode_gc.c`   | bytecode     | mark-sweep |   629 |    262K cells   |   5.91            |  8.87           | 1.00× (anchor)         |
 
-fib(24), best-of-25, both substrates. The full 5-benchmark matrix
-(fib, tak, ack, nrev+sum, tailsum) is in [`FINDINGS.md`](FINDINGS.md);
-fib preserves the ordering across the suite.
+fib(24), best-of-25, both substrates (min-of-min over 3 passes for wasm,
+min over 10 runs for native — bench is noisy at sub-20ms). The full
+5-benchmark matrix (fib, tak, ack, nrev+sum, tailsum) is in
+[`FINDINGS.md`](FINDINGS.md); fib preserves the *qualitative* ordering
+across the suite, but post-PR1 (primitive validation) the
+`bytecode` / `bytecode_gc` ordering is now shape-dependent — see
+"PR1c — mechanical port..." in FINDINGS.md for the flipped ordering
+on prim-density-bound benchmarks.
 
 Bench builds use `_big.wasm` variants at 16M cells for the no-GC engines so
 they don't OOM on heavy benchmarks; the GC engines use their default arenas
@@ -126,9 +131,9 @@ FINDINGS.md for the full story.
 If your priority is speed, the engine architecture is the lever (bytecode
 wins 2.6×); GC strategy is a smaller secondary effect (0.94×-1.83× swing).
 
-If your priority is small + simple, `lisp.c` is 370 lines and runs everything
+If your priority is small + simple, `lisp.c` is 457 lines and runs everything
 the suite throws at it within the C stack and a 16M-cell arena;
-`lisp_region.c` adds 39 lines and gives you actual memory reclamation.
+`lisp_region.c` adds 22 lines and gives you actual memory reclamation.
 
 ## Where the ceiling is — hand-written JS and C baselines
 
@@ -140,11 +145,11 @@ no interpreter). Live in `baselines/bench.{js,c}` and run inline at the end of
 
 | benchmark      | bytecode_gc | js (V8) | c (-O2) | bc_gc / js | bc_gc / c |
 |----------------|-------------|---------|---------|------------|-----------|
-| fib(24)        | 7.31 ms     | 0.33 ms | 0.13 ms | 22.2×      | 57.1×     |
-| tak(18,12,6)   | 3.56 ms     | 0.15 ms | 0.05 ms | 23.8×      | 71.1×     |
-| ack(3,4)       | 0.57 ms     | 0.05 ms | 0.02 ms | 11.5×      | 28.3×     |
-| nrev+sum(150)  | 0.87 ms     | 0.09 ms | 0.15 ms |  9.7×      |  6.0×     |
-| tailsum(30000) | 1.57 ms     | 0.02 ms | 0.00 ms | 96.9×      |  ∞ (folded) |
+| fib(24)        | 8.92 ms     | 0.43 ms | 0.13 ms | 20.7×      | 68.1×     |
+| tak(18,12,6)   | 4.86 ms     | 0.20 ms | 0.05 ms | 24.9×      | 93.5×     |
+| ack(3,4)       | 0.67 ms     | 0.05 ms | 0.02 ms | 12.7×      | 31.8×     |
+| nrev+sum(150)  | 0.88 ms     | 0.11 ms | 0.15 ms |  7.7×      |  5.9×     |
+| tailsum(30000) | 2.16 ms     | 0.02 ms | 0.00 ms | 99.9×      |  ∞ (folded) |
 
 Two findings:
 
@@ -156,7 +161,7 @@ Two findings:
   tail recursion as `n*(n+1)/2`. The interpreters can't see the whole program;
   this is the structural reason there's a ceiling no interpreter can reach.
 
-The engine work in this project closes the gap between `cek_gc` (worst, ~57ms
-fib) and `bytecode_gc` (finalist, ~7.3ms) — about 8×, on the interpreter side
-of a fixed substrate. The remaining ~55× to native C lives in
+The engine work in this project closes the gap between `cek_gc` (worst, ~63ms
+fib) and `bytecode_gc` (finalist, ~8.9ms) — about 7×, on the interpreter side
+of a fixed substrate. The remaining ~68× to native C lives in
 compiler/JIT territory.
