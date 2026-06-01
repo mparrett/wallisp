@@ -45,7 +45,7 @@ enum {
   SP_NIL=0, SP_T, SP_ERR, SP_UNBOUND,
   // primitives:
   PR_CONS, PR_CAR, PR_CDR, PR_ADD, PR_SUB, PR_MUL, PR_DIV, PR_MOD, PR_EQ, PR_LT,
-  PR_NULLP, PR_PAIRP, PR_LISTQ, PR_SETCAR, PR_SETCDR,
+  PR_NULLP, PR_PAIRP, PR_LISTQ, PR_SETCAR, PR_SETCDR, PR_CALLCC,
   SP_COUNT
 };
 #define NIL      mkspec(SP_NIL)
@@ -198,6 +198,16 @@ static u32 make_closure(u32 params, u32 body, u32 env){
   return cons(s_closure, cons(params, cons(body, cons(env, NIL))));
 }
 static int is_closure(u32 v){ return is_cons(v) && car(v)==s_closure; }
+
+// EXP2: call/cc. A reified continuation is just a cons (%cont . K). On apply,
+// we restore the captured K and return_val into it — the saved K already
+// chains all the way back to K_HALT, so invoking it terminates the current
+// computation and resumes wherever the call/cc was. No extra root: the cont
+// keeps the K reachable through its cdr.
+static u32 s_cont;
+static u32 make_cont(u32 K){ return cons(s_cont, K); }
+static int is_cont(u32 v){ return is_cons(v) && car(v)==s_cont; }
+static u32 cont_k(u32 v){ return cdr(v); }
 
 // PR1: see engines/lisp.c for the design notes. Inline arity check,
 // operand type checks, 30-bit overflow trap, polymorphic = (metacircular
@@ -456,6 +466,22 @@ static u32 return_val(u32 V, u32 _unused, u32 K){
       if(is_cons(todo))                              // still operands to evaluate?
         { TAIL eval_expr(car(todo), E, k_args(fn, done, cdr(todo), E, next)); }
       u32 args=reverse(done);
+      // EXP2: (call/cc f) — apply f to a continuation value wrapping `next`.
+      // Reduces to a normal apply after re-binding fn=f and args=(cont).
+      if(fn==mkspec(PR_CALLCC)){
+        if(!is_cons(args) || !is_nil(cdr(args))) return ERR;
+        u32 f = car(args);
+        u32 cont = make_cont(next);
+        args = cons(cont, NIL);
+        fn = f;
+      }
+      // EXP2: (k v) — invoking a reified continuation: restore captured K,
+      // return v into it. The current `next` is discarded — that's the whole
+      // point of first-class continuations.
+      if(is_cont(fn)){
+        if(!is_cons(args) || !is_nil(cdr(args))) return ERR;
+        TAIL return_val(car(args), 0, cont_k(fn));
+      }
       if(is_prim(fn)){
         u32 r=apply_prim(fn, args);
         if(r==ERR) return ERR;
@@ -495,6 +521,7 @@ static void init(){
   s_else  =intern("else",4);
   s_setbang=intern("set!",4);
   s_closure=intern("%closure",8);
+  s_cont   =intern("%cont",5);
   // sentinel head: car is an unbound marker that matches no real symbol.
   g_head = cons(UNBOUND, NIL);
   g_env  = g_head;
@@ -510,6 +537,7 @@ static void init(){
   bindp("null?",mkspec(PR_NULLP));bindp("pair?",mkspec(PR_PAIRP));
   bindp("list?",mkspec(PR_LISTQ));
   bindp("set-car!",mkspec(PR_SETCAR)); bindp("set-cdr!",mkspec(PR_SETCDR));
+  bindp("call/cc",mkspec(PR_CALLCC));
 }
 
 // ---- printer (writes into a fixed output buffer in linear memory) ----------
@@ -533,6 +561,7 @@ static void print_val(u32 v){
   if(is_prim(v)){ emits("<primitive>"); return; }
   if(is_sym(v)){ u32 i=symidx(v); for(u32 k=0;k<symlen[i];k++) emit(symname[i][k]); return; }
   if(is_closure(v)){ emits("<lambda>"); return; }
+  if(is_cont(v)){ emits("<continuation>"); return; }
   if(is_cons(v)){
     emit('(');
     u32 p=v; int first=1;

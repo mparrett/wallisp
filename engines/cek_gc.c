@@ -61,7 +61,7 @@ void* memcpy(void* d, const void* s, unsigned long n){ u8* a=(u8*)d; const u8* b
 enum {
   SP_NIL=0, SP_T, SP_ERR, SP_UNBOUND,
   PR_CONS, PR_CAR, PR_CDR, PR_ADD, PR_SUB, PR_MUL, PR_DIV, PR_MOD, PR_EQ, PR_LT,
-  PR_NULLP, PR_PAIRP, PR_LISTQ, PR_SETCAR, PR_SETCDR,
+  PR_NULLP, PR_PAIRP, PR_LISTQ, PR_SETCAR, PR_SETCDR, PR_CALLCC,
   SP_COUNT
 };
 #define NIL      mkspec(SP_NIL)
@@ -237,6 +237,17 @@ static u32 make_closure(u32 params, u32 body, u32 env){
   return cons(s_closure, cons(params, cons(body, cons(env, NIL))));
 }
 static int is_closure(u32 v){ return is_cons(v) && car(v)==s_closure; }
+
+// EXP2: reified continuation = (%cont . K). Single cons, so gc_a/gc_b on the
+// allocating cons() call already protect car (s_cont) and cdr (K). The K
+// itself is a cons chain that ends at K_HALT; marking the cont reaches all
+// of it transitively, so no new root is needed beyond the cont value's own
+// reachability (R_K when applied; the closure env when held as a captured
+// value; the K_ARGS slot when in flight).
+static u32 s_cont;
+static u32 make_cont(u32 K){ return cons(s_cont, K); }
+static int is_cont(u32 v){ return is_cons(v) && car(v)==s_cont; }
+static u32 cont_k(u32 v){ return cdr(v); }
 
 // PR1: see engines/lisp.c for the design notes. Inline arity check,
 // operand type checks, 30-bit overflow trap, polymorphic = (metacircular
@@ -511,6 +522,25 @@ static u32 return_val(u32 V, u32 _unused, u32 K){
       R_save[R_ssp++] = done;
       u32 args = reverse(done);
       R_ssp--;
+      // EXP2: (call/cc f) — wrap `next` in a cont value and re-dispatch as
+      // (f cont). Pin `args` across make_cont + cons; `next` itself is rooted
+      // via R_K → K_ARGS slot 4.
+      if(fn==mkspec(PR_CALLCC)){
+        if(!is_cons(args) || !is_nil(cdr(args))) return ERR;
+        u32 f = car(args);
+        R_save[R_ssp++] = f;                          // pin f over allocations
+        u32 cont = make_cont(next);
+        R_save[R_ssp++] = cont;
+        args = cons(cont, NIL);
+        R_ssp -= 2;
+        fn = f;
+      }
+      // EXP2: invoking a reified continuation — discard current `next`, jump
+      // straight back into the captured K with the supplied value.
+      if(is_cont(fn)){
+        if(!is_cons(args) || !is_nil(cdr(args))) return ERR;
+        TAIL return_val(car(args), 0, cont_k(fn));
+      }
       if(is_prim(fn)){
         R_save[R_ssp++] = args;
         u32 r = apply_prim(fn, args);
@@ -582,6 +612,7 @@ static void init(){
   s_else  =intern("else",4);
   s_setbang=intern("set!",4);
   s_closure=intern("%closure",8);
+  s_cont   =intern("%cont",5);
   g_head = cons(UNBOUND, NIL);
   g_env  = g_head;
   g_khalt= cons(mkfix(K_HALT), NIL);
@@ -596,6 +627,7 @@ static void init(){
   bindp("null?",mkspec(PR_NULLP));bindp("pair?",mkspec(PR_PAIRP));
   bindp("list?",mkspec(PR_LISTQ));
   bindp("set-car!",mkspec(PR_SETCAR)); bindp("set-cdr!",mkspec(PR_SETCDR));
+  bindp("call/cc",mkspec(PR_CALLCC));
 }
 
 // ---- printer (identical) ---------------------------------------------------
@@ -619,6 +651,7 @@ static void print_val(u32 v){
   if(is_prim(v)){ emits("<primitive>"); return; }
   if(is_sym(v)){ u32 i=symidx(v); for(u32 k=0;k<symlen[i];k++) emit_(symname[i][k]); return; }
   if(is_closure(v)){ emits("<lambda>"); return; }
+  if(is_cont(v)){ emits("<continuation>"); return; }
   if(is_cons(v)){
     emit_('(');
     u32 p=v; int first=1;

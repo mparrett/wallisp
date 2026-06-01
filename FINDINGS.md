@@ -1927,3 +1927,137 @@ not PR2c helping. The signal is that PR2c is comfortably within
   unmemo fib(18) in the default arena because of K-continuation
   allocation; memo fib(18) completes correctly. Mutation isn't just
   an optimization — for arena-constrained engines, it's a capability.
+
+---
+
+## H7 — does CEK finally win with `call/cc`? (FALSIFIED)
+
+Pre-registered (`docs/project_notes/gap_closure_plan.md` EXP2): CEK's K
+continuation is already first-class internally; exposing it as `call/cc`
+should be cheap. Predicted ratio: `cek_callcc_generator /
+bytecode_gc_explicit ≤ 1.5×`. Upside falsification (CEK exclusively wins)
+would have been the matrix's first speed-justified case for CEK.
+
+**Result: 23.5× — falsified well past the >3× line.** The "first-class K"
+framing was naive at the implementation level.
+
+### What was implemented
+
+Cheap and clean: ~25 lines in each of `cek.c` and `cek_gc.c`. A reified
+continuation is a single cons `(%cont . K)` where `K` is the saved
+continuation chain. In the `K_ARGS` apply branch:
+
+```c
+if (fn == PR_CALLCC) {            // (call/cc f)
+  args = cons(make_cont(next), NIL);
+  fn = f;                          // re-dispatch as (f cont)
+}
+if (is_cont(fn))                   // (k v) — restore captured K, return v
+  TAIL return_val(car(args), 0, cont_k(fn));
+```
+
+`cek_gc.c` adds `R_save` pinning around the two extra allocations. Mark
+walk reaches the captured K transitively through `cont`'s cdr — no new
+GC root needed. Non-CEK engines leave `call/cc` unbound; gated parity
+suite is `harness/parity_callcc.mjs` (**16/16 agree** between `cek.wasm`
+and `cek_gc.wasm`).
+
+### Benchmark (sum 0..N-1, N=2000, min over 3 passes × 25 reps)
+
+`harness/bench_callcc.mjs`. Decomposed deliberately so we can see where
+the cost lives.
+
+```
+config                                  ms   gc
+─────────────────────────────────────────────────
+cek_gc / call-cc generator           2.874   2     ← `yield` + `next` via call/cc + set!
+cek_gc / sync call/cc                1.324   1     ← (call/cc (lambda (k) (k n))) per iter
+cek_gc / plain fn   (no cc)          0.967   0     ← (define wrap (lambda (n) n))
+cek_gc / explicit   (no fn)          0.943   0     ← inline sum-loop
+bytecode_gc / plain fn               0.146   0
+bytecode_gc / explicit               0.122   0
+```
+
+Ratios:
+- `cek_callcc_generator / bytecode_gc_explicit = 23.47×` — pre-registered
+  ≤1.5× **falsified**.
+- `cek_sync_callcc / cek_plain_fn = 1.37×` — marginal cost of one
+  synchronous call/cc per iteration. **Small.** Just 37% over a plain
+  function call.
+- `cek_callcc_generator / cek_explicit = 3.05×` — total generator-pattern
+  tax inside CEK.
+- `cek_explicit / bytecode_gc_explicit = 7.70×` — CEK's baseline gap on
+  this shape (much wider than the 2.2× the cek.c banner cites for fib).
+
+### What this actually measured
+
+The 23× is the *product* of two independent costs:
+
+1. **CEK is 7.7× slower than bytecode on tail loops** — much worse than
+   on fib (2.2×). The reason: fib is arithmetic-heavy, low allocation per
+   step; tail loops are pure dispatch + 1 K_ARGS allocation per call.
+   CEK pays per step; bytecode amortizes through OP_TAILCALL.
+2. **The generator pattern is 3× slower than a tail loop in CEK** —
+   not from `call/cc` capture (1.37× marginal), but from cycling
+   continuations through `set!`-stored references. Each `(yield i)` cycle
+   stores a new k, jumps to the consumer's k, and returns; each
+   `(next)` reciprocates. Two captured-K invocations per iteration,
+   and the captured K abandons the current K_ARGS chain, so the K
+   discipline that normally amortizes can't.
+
+So `call/cc` itself is **cheap** (1.37× marginal). What's expensive is
+the *generator idiom*: cycling first-class continuations through stored
+references defeats CEK's internal control-flow amortization, and CEK's
+constant-per-step cost on tail loops is much higher than bytecode's
+constant-per-step cost. Both costs multiply.
+
+### Why the original framing missed
+
+The hypothesis ("K is already first-class internally; `call/cc` just
+exposes it") is implementation-true but doesn't constrain runtime cost.
+Internally, K_ARGS chains are short-lived and amortized by the
+TAIL-dispatch discipline. *Exposed* K is held in `set!`-stored bindings
+across calls; invoking it abandons the current K chain. So we pay to
+build a new K chain on every dispatch, knowing it will be discarded.
+That's a per-iteration allocation cost the internal machinery never
+incurs.
+
+### Falsification-quality outcomes
+
+- **Hypothesis ≤1.5×: FALSIFIED** (observed 23.47×).
+- **Falsification line >3×: confirmed.** The framing "K is first-class
+  internally" was misleading at the cost level.
+- **Marginal call/cc cost is small (1.37×).** The expensive part is the
+  generator idiom, not the primitive.
+- **CEK's tail-loop gap is much wider than fib suggests (7.7× vs 2.2×).
+  Update the "what each engine taught us" intuition: CEK's 2.2× quote
+  is fib-specific.**
+
+### Implementation correctness
+
+The implementation is sound — `cek.wasm` and `cek_gc.wasm` agree on all
+16 call/cc parity programs, including non-trivial cases like
+"continuation stored via `set!`, invoked after the original lambda has
+returned" (test #2 in `parity_callcc.mjs`). The 117-program all-engine
+parity suite is unchanged (call/cc is gated to CEK).
+
+### What this means for the matrix
+
+CEK still has no benchmark where it exclusively wins. The hoped-for
+"CEK earns its place by capability + speed on call/cc workloads" did not
+materialize. CEK keeps its existing justifications (deep non-tail
+recursion via heap-allocated K, exclusive memoization-rescues-arena
+finding from PR2c), plus a new one: *first-class continuations work*.
+But "work" is not "fast."
+
+### Pending follow-up (not in this PR)
+
+- Could a smarter call/cc implementation share K structure (e.g.,
+  copy-on-write) and avoid the 3× generator-pattern tax? Probably yes,
+  but it would require non-trivial K-graph management and breaks the
+  "tiny implementation" framing that justified building this.
+- Worth measuring: do real Scheme implementations (e.g. Chez, Racket)
+  hit a similar generator tax? The conventional wisdom says yes —
+  generators-via-call/cc are widely considered slow, which is why most
+  Schemes have a dedicated coroutine primitive. We just measured it
+  ourselves.
