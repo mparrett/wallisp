@@ -45,7 +45,7 @@ enum {
   SP_NIL=0, SP_T, SP_ERR, SP_UNBOUND,
   // primitives:
   PR_CONS, PR_CAR, PR_CDR, PR_ADD, PR_SUB, PR_MUL, PR_DIV, PR_MOD, PR_EQ, PR_LT,
-  PR_NULLP, PR_PAIRP, PR_LISTQ,
+  PR_NULLP, PR_PAIRP, PR_LISTQ, PR_SETCAR, PR_SETCDR,
   SP_COUNT
 };
 #define NIL      mkspec(SP_NIL)
@@ -95,7 +95,7 @@ static u32 intern(const char* s, u32 len){
 }
 
 // cached symbols for special forms (filled in init)
-static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_cond,s_else;
+static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_cond,s_else,s_setbang;
 
 // ---- reader ----------------------------------------------------------------
 // Hand-rolled recursive descent over a source buffer. Supports ints (with
@@ -169,6 +169,17 @@ static u32 env_lookup(u32 env, u32 sym){
 static u32 env_define(u32 env, u32 sym, u32 val){
   return cons(cons(sym,val), env);
 }
+// PR2: walk env, mutate the binding cons's cdr in place. See engines/lisp.c.
+static u32 env_set(u32 env, u32 sym, u32 val){
+  for(u32 f=env; is_cons(f); f=cdr(f)){
+    u32 binding=car(f);
+    if(is_cons(binding) && car(binding)==sym){
+      cells[considx(binding)].cdr = val;
+      return val;
+    }
+  }
+  return UNBOUND;
+}
 // Global define mutates IN PLACE by splicing after a stable sentinel head cell,
 // so closures that captured the global env earlier still observe new bindings
 // (this is what makes top-level recursion work). g_head is that sentinel.
@@ -216,6 +227,10 @@ static u32 apply_prim(u32 prim, u32 args){
 
   switch(id){
     case PR_CONS:  if(!is_nil(d1)) return ERR; return cons(a,b);
+    case PR_SETCAR: if(!is_nil(d1) || !is_cons(a)) return ERR;
+                    cells[considx(a)].car = b; return b;
+    case PR_SETCDR: if(!is_nil(d1) || !is_cons(a)) return ERR;
+                    cells[considx(a)].cdr = b; return b;
     case PR_EQ:    if(!is_nil(d1)) return ERR; return (a==b)?TRUE:NIL;
     case PR_LT:    if(!is_nil(d1) || !is_fix(a) || !is_fix(b)) return ERR;
                    return (fixval(a)<fixval(b))?TRUE:NIL;
@@ -282,7 +297,7 @@ static u32 apply_prim(u32 prim, u32 args){
 
 // Continuation kinds. A K is a cons list: (kind-fixnum . fields...). It lives in
 // the same arena as everything else.
-enum { K_HALT=0, K_IF, K_ARGS, K_DEFINE, K_SEQ };
+enum { K_HALT=0, K_IF, K_ARGS, K_DEFINE, K_SEQ, K_SETBANG };
 
 static u32 g_khalt;                       // the singleton halt continuation
 static u32 k_kind(u32 K){ return fixval(car(K)); }
@@ -306,6 +321,10 @@ static u32 k_define(u32 name,u32 next){
 // K_SEQ:   (K_SEQ rest env next)
 static u32 k_seq(u32 rest,u32 env,u32 next){
   return cons(mkfix(K_SEQ), cons(rest,cons(env,cons(next,NIL))));
+}
+// K_SETBANG:(K_SETBANG sym env next) — when value V comes back, env_set(env,sym,V).
+static u32 k_setbang(u32 sym,u32 env,u32 next){
+  return cons(mkfix(K_SETBANG), cons(sym,cons(env,cons(next,NIL))));
 }
 
 static u32 reverse(u32 lst){
@@ -355,6 +374,18 @@ static u32 eval_expr(u32 C, u32 E, u32 K){
     u32 k = k_define(head, K);
     TAIL eval_expr(car(cdr(cdr(C))), E, k);         // evaluate the value
   }
+  if(op==s_setbang){
+    // (set! sym expr) — strict arity 2. Queue K_SETBANG, evaluate value;
+    // K_SETBANG's case in return_val performs the env_set + propagates value.
+    u32 d1=cdr(C);
+    if(!is_cons(d1)) return ERR;
+    u32 d2=cdr(d1);
+    if(!is_cons(d2) || !is_nil(cdr(d2))) return ERR;
+    u32 sym=car(d1);
+    if(!is_sym(sym)) return ERR;
+    u32 k = k_setbang(sym, E, K);
+    TAIL eval_expr(car(d2), E, k);
+  }
   if(op==s_cond){
     // (cond (t1 e1) ... [(else en)]) -> (if t1 e1 (if t2 e2 ... en))
     u32 rev=NIL; for(u32 c=cdr(C); is_cons(c); c=cdr(c)) rev=cons(car(c),rev);
@@ -403,6 +434,12 @@ static u32 return_val(u32 V, u32 _unused, u32 K){
     case K_DEFINE: {
       global_define(kf(K,0), V);                    // bind name -> value
       TAIL return_val(kf(K,0), 0, kf(K,1));         // define returns the name
+    }
+
+    case K_SETBANG: {
+      u32 sym=kf(K,0), E=kf(K,1), next=kf(K,2);
+      if(env_set(E, sym, V)==UNBOUND) return ERR;   // set! on unbound
+      TAIL return_val(V, 0, next);                  // set! returns the value
     }
 
     case K_SEQ: {
@@ -456,6 +493,7 @@ static void init(){
   s_begin =intern("begin",5);
   s_cond  =intern("cond",4);
   s_else  =intern("else",4);
+  s_setbang=intern("set!",4);
   s_closure=intern("%closure",8);
   // sentinel head: car is an unbound marker that matches no real symbol.
   g_head = cons(UNBOUND, NIL);
@@ -471,6 +509,7 @@ static void init(){
   bindp("=",mkspec(PR_EQ));      bindp("<",mkspec(PR_LT));
   bindp("null?",mkspec(PR_NULLP));bindp("pair?",mkspec(PR_PAIRP));
   bindp("list?",mkspec(PR_LISTQ));
+  bindp("set-car!",mkspec(PR_SETCAR)); bindp("set-cdr!",mkspec(PR_SETCDR));
 }
 
 // ---- printer (writes into a fixed output buffer in linear memory) ----------

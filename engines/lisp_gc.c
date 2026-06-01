@@ -62,7 +62,7 @@ void* memcpy(void* d, const void* s, unsigned long n){ u8* a=(u8*)d; const u8* b
 enum {
   SP_NIL=0, SP_T, SP_ERR, SP_UNBOUND,
   PR_CONS, PR_CAR, PR_CDR, PR_ADD, PR_SUB, PR_MUL, PR_DIV, PR_MOD, PR_EQ, PR_LT,
-  PR_NULLP, PR_PAIRP, PR_LISTQ,
+  PR_NULLP, PR_PAIRP, PR_LISTQ, PR_SETCAR, PR_SETCDR,
   SP_COUNT
 };
 #define NIL      mkspec(SP_NIL)
@@ -136,7 +136,7 @@ static u32 intern(const char* s, u32 len){
   return mksym(i);
 }
 
-static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_cond,s_else;
+static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_cond,s_else,s_setbang;
 
 // ---- reader (identical) ----------------------------------------------------
 static const char* rp;
@@ -204,6 +204,18 @@ static u32 env_lookup(u32 env, u32 sym){
 static u32 env_define(u32 env, u32 sym, u32 val){
   return cons(cons(sym,val), env);
 }
+// PR2: walk env, mutate the binding cons's cdr in place. See engines/lisp.c
+// for design notes. No allocation, so GC-safe with no shadow-stack discipline.
+static u32 env_set(u32 env, u32 sym, u32 val){
+  for(u32 f=env; is_cons(f); f=cdr(f)){
+    u32 binding=car(f);
+    if(is_cons(binding) && car(binding)==sym){
+      cells[considx(binding)].cdr = val;
+      return val;
+    }
+  }
+  return UNBOUND;
+}
 static u32 g_head;
 static u32 g_env;
 static void global_define(u32 sym, u32 val){
@@ -247,6 +259,10 @@ static u32 apply_prim(u32 prim, u32 args){
 
   switch(id){
     case PR_CONS:  if(!is_nil(d1)) return ERR; return cons(a,b);
+    case PR_SETCAR: if(!is_nil(d1) || !is_cons(a)) return ERR;
+                    cells[considx(a)].car = b; return b;
+    case PR_SETCDR: if(!is_nil(d1) || !is_cons(a)) return ERR;
+                    cells[considx(a)].cdr = b; return b;
     case PR_EQ:    if(!is_nil(d1)) return ERR; return (a==b)?TRUE:NIL;
     case PR_LT:    if(!is_nil(d1) || !is_fix(a) || !is_fix(b)) return ERR;
                    return (fixval(a)<fixval(b))?TRUE:NIL;
@@ -371,6 +387,22 @@ static u32 eval(u32 x, u32 env){
     global_define(head, val);
     R_ssp = base;
     return head;
+  }
+  if(op==s_setbang){
+    // (set! sym expr) — strict arity 2. env_set does no allocation, so val
+    // on the C stack is safe across the call; no new R_save discipline needed.
+    u32 d1 = cdr(x);
+    if(!is_cons(d1)){ R_ssp = base; return ERR; }
+    u32 d2 = cdr(d1);
+    if(!is_cons(d2) || !is_nil(cdr(d2))){ R_ssp = base; return ERR; }
+    u32 sym = car(d1);
+    if(!is_sym(sym)){ R_ssp = base; return ERR; }
+    u32 val = eval(car(d2), env);
+    if(val==ERR){ R_ssp = base; return ERR; }
+    u32 r = env_set(env, sym, val);
+    R_ssp = base;
+    if(r==UNBOUND) return ERR;
+    return val;
   }
   if(op==s_cond){
     // (cond (t1 e1) ... [(else en)]): walk clauses, eval test non-tail, body tail.
@@ -515,6 +547,7 @@ static void init(){
   s_begin =intern("begin",5);
   s_cond  =intern("cond",4);
   s_else  =intern("else",4);
+  s_setbang=intern("set!",4);
   s_closure=intern("%closure",8);
   g_head = cons(UNBOUND, NIL);
   g_env  = g_head;
@@ -528,6 +561,7 @@ static void init(){
   bindp("=",mkspec(PR_EQ));      bindp("<",mkspec(PR_LT));
   bindp("null?",mkspec(PR_NULLP));bindp("pair?",mkspec(PR_PAIRP));
   bindp("list?",mkspec(PR_LISTQ));
+  bindp("set-car!",mkspec(PR_SETCAR)); bindp("set-cdr!",mkspec(PR_SETCDR));
 }
 
 // ---- printer (identical) ---------------------------------------------------

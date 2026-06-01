@@ -32,7 +32,7 @@ typedef unsigned char u8;
 
 enum { SP_NIL=0, SP_T, SP_ERR, SP_UNBOUND,
        PR_CONS, PR_CAR, PR_CDR, PR_ADD, PR_SUB, PR_MUL, PR_DIV, PR_MOD, PR_EQ, PR_LT,
-       PR_NULLP, PR_PAIRP, PR_LISTQ, SP_COUNT };
+       PR_NULLP, PR_PAIRP, PR_LISTQ, PR_SETCAR, PR_SETCDR, SP_COUNT };
 #define NIL mkspec(SP_NIL)
 #define TRUE mkspec(SP_T)
 #define ERR mkspec(SP_ERR)
@@ -69,7 +69,7 @@ static u32 intern(const char*s,u32 len){
   u32 i=sym_top++; for(u32 k=0;k<len;k++) symname[i][k]=s[k]; symlen[i]=len;
   return mksym(i);
 }
-static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_closure,s_cond,s_else;
+static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_closure,s_cond,s_else,s_setbang;
 
 // ---- reader (identical) ----------------------------------------------------
 static const char*rp; static const char*rend;
@@ -138,6 +138,10 @@ static u32 apply_prim(u32 prim,u32 args){
 
   switch(id){
     case PR_CONS:  if(!is_nil(d1)) return ERR; return cons(a,b);
+    case PR_SETCAR: if(!is_nil(d1) || !is_cons(a)) return ERR;
+                    cells[considx(a)].car = b; return b;
+    case PR_SETCDR: if(!is_nil(d1) || !is_cons(a)) return ERR;
+                    cells[considx(a)].cdr = b; return b;
     case PR_EQ:    if(!is_nil(d1)) return ERR; return (a==b)?TRUE:NIL;
     case PR_LT:    if(!is_nil(d1) || !is_fix(a) || !is_fix(b)) return ERR;
                    return (fixval(a)<fixval(b))?TRUE:NIL;
@@ -196,7 +200,7 @@ static int is_closure(u32 v){ return is_cons(v)&&car(v)==s_closure; }
 // COMPILER: cons-tree AST -> flat bytecode (done ONCE per expression)
 // ════════════════════════════════════════════════════════════════════════════
 enum {
-  OP_CONST, OP_LOADL, OP_LOADG, OP_DEFG, OP_POP,
+  OP_CONST, OP_LOADL, OP_LOADG, OP_DEFG, OP_SETL, OP_SETG, OP_POP,
   OP_JMP, OP_JFALSE, OP_CLOSURE, OP_CALL, OP_TAILCALL, OP_RET, OP_HALT
 };
 #define CODE_MAX 65536
@@ -257,6 +261,22 @@ static void compile(u32 x,u32 cenv,int tail){
     }
     compile(car(cdr(cdr(x))),cenv,0);
     emit(OP_DEFG); emit(symidx(head));
+    if(tail)emit(OP_RET); return;
+  }
+  if(op==s_setbang){
+    // (set! sym expr) — strict arity 2. Resolves to OP_SETL (local) or
+    // OP_SETG (global, errors at runtime if previously unbound). See
+    // engines/bytecode_gc.c for the design rationale.
+    u32 d1=cdr(x);
+    if(!is_cons(d1)){ g_cerr=1; emit(OP_CONST); emit(ERR); if(tail)emit(OP_RET); return; }
+    u32 d2=cdr(d1);
+    if(!is_cons(d2) || !is_nil(cdr(d2))){ g_cerr=1; emit(OP_CONST); emit(ERR); if(tail)emit(OP_RET); return; }
+    u32 sym=car(d1);
+    if(!is_sym(sym)){ g_cerr=1; emit(OP_CONST); emit(ERR); if(tail)emit(OP_RET); return; }
+    compile(car(d2), cenv, 0);
+    u32 d, i;
+    if(resolve(sym, cenv, &d, &i)){ emit(OP_SETL); emit(d); emit(i); }
+    else                          { emit(OP_SETG); emit(symidx(sym)); }
     if(tail)emit(OP_RET); return;
   }
   if(op==s_cond){
@@ -338,6 +358,19 @@ static u32 run(u32 entry){
       case OP_DEFG: {
         u32 s=code[ip++]; gval[s]=vstack[vsp-1]; vstack[vsp-1]=mksym(s); break;
       }
+      case OP_SETL: {
+        // (set! local-x value): walk d frames + i positions, mutate cell.car.
+        u32 d=code[ip++], i=code[ip++], f=env;
+        while(d--) f=cdr(f);
+        u32 v=car(f); while(i--) v=cdr(v);
+        cells[considx(v)].car = vstack[vsp-1]; break;
+      }
+      case OP_SETG: {
+        // (set! global-x value): error if previously unbound.
+        u32 s=code[ip++];
+        if(gval[s]==UNBOUND) return ERR;
+        gval[s]=vstack[vsp-1]; break;
+      }
       case OP_POP: vsp--; break;
       case OP_JMP: ip=code[ip]; break;
       case OP_JFALSE: { u32 t=code[ip++]; if(is_nil(vstack[--vsp])) ip=t; break; }
@@ -394,6 +427,7 @@ static void init(){
   s_quote=intern("quote",5); s_if=intern("if",2); s_define=intern("define",6);
   s_lambda=intern("lambda",6); s_let=intern("let",3); s_begin=intern("begin",5);
   s_cond=intern("cond",4); s_else=intern("else",4);
+  s_setbang=intern("set!",4);
   s_closure=intern("%closure",8);
   global_define(intern("nil",3),NIL); global_define(intern("t",1),TRUE);
   bindp("cons",mkspec(PR_CONS)); bindp("car",mkspec(PR_CAR)); bindp("cdr",mkspec(PR_CDR));
@@ -401,6 +435,7 @@ static void init(){
   bindp("/",mkspec(PR_DIV)); bindp("mod",mkspec(PR_MOD));
   bindp("=",mkspec(PR_EQ)); bindp("<",mkspec(PR_LT));
   bindp("null?",mkspec(PR_NULLP)); bindp("pair?",mkspec(PR_PAIRP)); bindp("list?",mkspec(PR_LISTQ));
+  bindp("set-car!",mkspec(PR_SETCAR)); bindp("set-cdr!",mkspec(PR_SETCDR));
 }
 
 // ---- printer (identical) ---------------------------------------------------

@@ -26,48 +26,6 @@ const ENGINES = [
   'bytecode_gc.wasm',
 ];
 
-// PR2 (mutation: set! / set-car! / set-cdr!) is being rolled out engine-by-
-// engine; PR2a pilots on lisp.wasm. Engines in this set must match the
-// expected output in PR2_PROGRAMS; the rest don't have set! and would error
-// or behave differently. When all 8 engines ship PR2, fold PR2_PROGRAMS
-// back into PROGRAMS and delete this gate (same pattern as PR1).
-const SUPPORTS_PR2 = new Set([
-  'lisp.wasm',
-  'bytecode_gc.wasm',
-]);
-
-const PR2_PROGRAMS = [
-  // basic set! on global
-  ['(begin (define x 5) (set! x 10) x)', '10'],
-  ['(begin (define x 5) (set! x (+ x 1)) x)', '6'],
-  // set! on unbound — error
-  ['(set! y 10)', '<error>'],
-  // set! arity / type errors
-  ['(set!)', '<error>'],
-  ['(set! x)', '<error>'],
-  ['(begin (define x 5) (set! x 1 2))', '<error>'],
-  ['(set! 5 10)', '<error>'],
-  // set-car! / set-cdr! happy path
-  ['(begin (define c (cons 1 2)) (set-car! c 9) c)', '(9 . 2)'],
-  ['(begin (define c (cons 1 2)) (set-cdr! c 9) c)', '(1 . 9)'],
-  ['(begin (define c (cons 1 (cons 2 nil))) (set-car! (cdr c) 99) c)', '(1 99)'],
-  // set-car! / set-cdr! type errors
-  ['(set-car! 5 9)', '<error>'],
-  ['(set-cdr! nil 9)', '<error>'],
-  // set-car! / set-cdr! arity
-  ['(set-car!)', '<error>'],
-  ['(set-car! (cons 1 2))', '<error>'],
-  ['(set-car! (cons 1 2) 9 10)', '<error>'],
-  // the killer test: mutation visible through closures (lexical state)
-  ["(begin (define counter (let ((n 0)) (lambda () (begin (set! n (+ n 1)) n)))) (counter) (counter) (counter))",
-   '3'],
-  // mutation on a global through a closure
-  ['(begin (define n 0) (define inc (lambda () (begin (set! n (+ n 1)) n))) (inc) (inc) (inc) n)',
-   '3'],
-  // set-car! returns the new value (consistent with set!)
-  ['(begin (define c (cons 1 2)) (set-car! c 9))', '9'],
-  ['(begin (define x 1) (set! x 42))', '42'],
-];
 
 // Programs cover: numeric arithmetic, list ops, quote, cond/if, let, lambda,
 // closures, recursion (tail and non-tail), mutual recursion, primitive
@@ -189,6 +147,25 @@ const PROGRAMS = [
   '(+ 536870910 1)',         // FIX_MAX boundary OK
   '(+ 536870911 1)',
   '(/ -536870912 -1)',       // FIX_MIN / -1 = FIX_MAX+1
+
+  // ---- PR2: mutation (set! / set-car! / set-cdr!) -------------------------
+  '(begin (define x 5) (set! x 10) x)',
+  '(begin (define x 5) (set! x (+ x 1)) x)',
+  '(set! y 10)',                                      // unbound set! → error
+  '(set!)', '(set! x)',
+  '(begin (define x 5) (set! x 1 2))',                // over-arity → error
+  '(set! 5 10)',                                      // non-symbol → error
+  '(begin (define c (cons 1 2)) (set-car! c 9) c)',
+  '(begin (define c (cons 1 2)) (set-cdr! c 9) c)',
+  '(begin (define c (cons 1 (cons 2 nil))) (set-car! (cdr c) 99) c)',
+  '(set-car! 5 9)', '(set-cdr! nil 9)',               // type errors
+  '(set-car!)', '(set-car! (cons 1 2))',              // arity errors
+  '(set-car! (cons 1 2) 9 10)',
+  // killer test: mutation visible through a closure with lexical state
+  "(begin (define counter (let ((n 0)) (lambda () (begin (set! n (+ n 1)) n)))) (counter) (counter) (counter))",
+  '(begin (define n 0) (define inc (lambda () (begin (set! n (+ n 1)) n))) (inc) (inc) (inc) n)',
+  '(begin (define c (cons 1 2)) (set-car! c 9))',    // set-car! returns new value
+  '(begin (define x 1) (set! x 42))',                 // set! returns new value
 ];
 
 async function load(file) {
@@ -227,26 +204,7 @@ const main = async () => {
     }
   }
   console.log(`\n${programs - failures}/${programs} programs agree across all ${engines.length} engines`);
-
-  // PR2 rollout (same scaffolding as PR1 had): assert PR2-supporting engines
-  // match expected output. Fold PR2_PROGRAMS into PROGRAMS once all 8 ship.
-  const pr2Engines = engines.filter(([f]) => SUPPORTS_PR2.has(f));
-  let pr2Failures = 0;
-  console.log(`\nPR2 programs against ${pr2Engines.length} engine(s): ${pr2Engines.map(([f]) => f).join(', ')}`);
-  for (const [src, want] of PR2_PROGRAMS) {
-    for (const [name, run] of pr2Engines) {
-      const got = run(src);
-      if (got !== want) {
-        pr2Failures++;
-        console.log(`PR2 FAIL  ${name.padEnd(24)} ${JSON.stringify(src).slice(0, 60)}`);
-        console.log(`  expected ${JSON.stringify(want)}`);
-        console.log(`  got      ${JSON.stringify(got)}`);
-      }
-    }
-  }
-  console.log(`${PR2_PROGRAMS.length * pr2Engines.length - pr2Failures}/${PR2_PROGRAMS.length * pr2Engines.length} PR2 assertions passed`);
-
-  if (failures || pr2Failures) process.exit(1);
+  if (failures) process.exit(1);
 };
 
 main().catch(e => { console.error(e); process.exit(1); });
