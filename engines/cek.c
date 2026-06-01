@@ -44,7 +44,7 @@ typedef unsigned char  u8;
 enum {
   SP_NIL=0, SP_T, SP_ERR, SP_UNBOUND,
   // primitives:
-  PR_CONS, PR_CAR, PR_CDR, PR_ADD, PR_SUB, PR_MUL, PR_EQ, PR_LT,
+  PR_CONS, PR_CAR, PR_CDR, PR_ADD, PR_SUB, PR_MUL, PR_DIV, PR_MOD, PR_EQ, PR_LT,
   PR_NULLP, PR_PAIRP, PR_LISTQ,
   SP_COUNT
 };
@@ -188,21 +188,71 @@ static u32 make_closure(u32 params, u32 body, u32 env){
 }
 static int is_closure(u32 v){ return is_cons(v) && car(v)==s_closure; }
 
+// PR1: see engines/lisp.c for the design notes. Inline arity check,
+// operand type checks, 30-bit overflow trap, polymorphic = (metacircular
+// eval depends on it for symbol identity). +/-/* variadic with ≥2 args.
+#define FIX_MAX  ((i32) 0x1FFFFFFF)   //  536870911
+#define FIX_MIN  (-(i32)0x20000000)   // -536870912
+static int fits_fix(i32 v){ return v >= FIX_MIN && v <= FIX_MAX; }
+static int fits_fix64(long long v){ return v >= FIX_MIN && v <= FIX_MAX; }
+
 static u32 apply_prim(u32 prim, u32 args){
   u32 id=prim>>2;
-  u32 a=car(args), b=car(cdr(args));
+  if(!is_cons(args)) return ERR;
+  u32 a  = car(args);
+  u32 d0 = cdr(args);
+
   switch(id){
-    case PR_CONS: return cons(a,b);
-    case PR_CAR:  return car(a);
-    case PR_CDR:  return cdr(a);
-    case PR_ADD:  return mkfix(fixval(a)+fixval(b));
-    case PR_SUB:  return mkfix(fixval(a)-fixval(b));
-    case PR_MUL:  return mkfix(fixval(a)*fixval(b));
-    case PR_EQ:   return (a==b)?TRUE:NIL;
-    case PR_LT:   return (fixval(a)<fixval(b))?TRUE:NIL;
-    case PR_NULLP:return is_nil(a)?TRUE:NIL;
-    case PR_PAIRP:return is_cons(a)?TRUE:NIL;
-    case PR_LISTQ:return (is_nil(a)||is_cons(a))?TRUE:NIL;
+    case PR_NULLP: if(!is_nil(d0)) return ERR; return is_nil(a)?TRUE:NIL;
+    case PR_PAIRP: if(!is_nil(d0)) return ERR; return is_cons(a)?TRUE:NIL;
+    case PR_LISTQ: if(!is_nil(d0)) return ERR; return (is_nil(a)||is_cons(a))?TRUE:NIL;
+    case PR_CAR:   if(!is_nil(d0) || !is_cons(a)) return ERR; return cells[considx(a)].car;
+    case PR_CDR:   if(!is_nil(d0) || !is_cons(a)) return ERR; return cells[considx(a)].cdr;
+  }
+
+  if(!is_cons(d0)) return ERR;
+  u32 b  = car(d0);
+  u32 d1 = cdr(d0);
+
+  switch(id){
+    case PR_CONS:  if(!is_nil(d1)) return ERR; return cons(a,b);
+    case PR_EQ:    if(!is_nil(d1)) return ERR; return (a==b)?TRUE:NIL;
+    case PR_LT:    if(!is_nil(d1) || !is_fix(a) || !is_fix(b)) return ERR;
+                   return (fixval(a)<fixval(b))?TRUE:NIL;
+    case PR_DIV: {
+      if(!is_nil(d1) || !is_fix(a) || !is_fix(b)) return ERR;
+      i32 bv=fixval(b); if(bv==0) return ERR;
+      i32 r=fixval(a)/bv; if(!fits_fix(r)) return ERR;
+      return mkfix(r);
+    }
+    case PR_MOD: {
+      if(!is_nil(d1) || !is_fix(a) || !is_fix(b)) return ERR;
+      i32 bv=fixval(b); if(bv==0) return ERR;
+      return mkfix(fixval(a)%bv);
+    }
+    case PR_ADD: case PR_SUB: case PR_MUL: {
+      if(!is_fix(a) || !is_fix(b)) return ERR;
+      i32 av=fixval(a), bv=fixval(b), r;
+      if(id==PR_MUL){
+        long long m=(long long)av*(long long)bv;
+        if(!fits_fix64(m)) return ERR;
+        r=(i32)m;
+      } else {
+        r=(id==PR_ADD)?(av+bv):(av-bv);
+        if(!fits_fix(r)) return ERR;
+      }
+      if(is_nil(d1)) return mkfix(r);
+      long long acc=r;
+      for(u32 p=d1; is_cons(p); p=cdr(p)){
+        u32 v=car(p); if(!is_fix(v)) return ERR;
+        long long t = (id==PR_ADD) ? acc + (long long)fixval(v)
+                    : (id==PR_SUB) ? acc - (long long)fixval(v)
+                    :                acc * (long long)fixval(v);
+        if(!fits_fix64(t)) return ERR;
+        acc=t;
+      }
+      return mkfix((i32)acc);
+    }
   }
   return ERR;
 }
@@ -417,6 +467,7 @@ static void init(){
   bindp("cons",mkspec(PR_CONS)); bindp("car",mkspec(PR_CAR));
   bindp("cdr",mkspec(PR_CDR));   bindp("+",mkspec(PR_ADD));
   bindp("-",mkspec(PR_SUB));     bindp("*",mkspec(PR_MUL));
+  bindp("/",mkspec(PR_DIV));     bindp("mod",mkspec(PR_MOD));
   bindp("=",mkspec(PR_EQ));      bindp("<",mkspec(PR_LT));
   bindp("null?",mkspec(PR_NULLP));bindp("pair?",mkspec(PR_PAIRP));
   bindp("list?",mkspec(PR_LISTQ));

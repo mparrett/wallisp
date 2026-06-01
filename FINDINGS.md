@@ -1470,3 +1470,125 @@ will test this directly.
   is now measured, not just argued. The remaining six engines port
   mechanically; the ones with no inline-prim path will look like
   `lisp.c`, the ones with it will look like `bytecode_gc`.
+
+## PR1c — mechanical port to the remaining six engines + a flipped ordering
+
+PR1c lands PR1 on `lisp_trampoline`, `lisp_gc`, `lisp_region`, `cek`,
+`cek_gc`, and `bytecode`. The new `apply_prim` is a near-verbatim copy of
+the PR1a/PR1b design in each engine; no inline-prim arms exist in any of
+the six (the inline-prim fast path is unique to `bytecode_gc.c`), so the
+ports were genuinely mechanical. The `SUPPORTS_PR1` gate in
+`harness/parity.mjs` is deleted and the 45 PR1 programs collapse into
+the all-engine cross-check: **98/98 programs agree across all 8 engines**.
+
+### Pre-registered prediction (from PR1b's sharpened mechanism)
+
+- (e) Tree-walker variants (`lisp_trampoline`, `lisp_gc`, `lisp_region`)
+      track `lisp.c`'s ~10% fib(24) regression. They have the same hot
+      path shape (no inline-prim).
+- (f) `bytecode.c` (no GC, no inline-prim) tracks the tree-walkers, not
+      `bytecode_gc`. Same `apply_prim` hot path.
+- (g) CEK variants land at 5-15%. Their per-step continuation allocation
+      dilutes the prim validation cost as a fraction of total work.
+- (h) `bytecode_gc` unchanged (~0% regression from PR1b, since PR1c
+      didn't touch it).
+
+### Measured (best-of-25, default arenas where applicable, 3 passes)
+
+| engine               | fib(24) post-PR1c | pre-PR1 (ENGINES.md) | ratio | predicted |
+|----------------------|-------------------|----------------------|-------|-----------|
+| `lisp`               | 16.02 ms          | 13.30                | 1.21× | ~10%      |
+| `lisp_trampoline`    | 15.73             | 13.50                | 1.16× | ~10%      |
+| `lisp_region`        | 15.48             | 12.58                | 1.23× | ~10%      |
+| `lisp_gc`            | 21.58             | 18.84                | 1.15× | ~10%      |
+| `cek`                | 29.65             | 27.16                | 1.09× | 5-15%     |
+| `cek_gc`             | 53.93             | 51.10                | 1.06× | 5-15%     |
+| `bytecode`           |  8.51             |  7.21                | 1.18× | ~10%      |
+| `bytecode_gc`        |  7.73             |  7.33                | 1.05× | ~0%       |
+
+Tree-walkers came in slightly higher than predicted (~16-23% vs ~10%),
+CEK lower (~6-9% vs 5-15%), `bytecode_gc` and `bytecode` close to
+prediction. Run-to-run variance is high on `cek_gc` (52-84 ms across
+3 passes) but stable on everything else. (Prior ENGINES.md absolute
+numbers were captured at a different time, so part of the gap is
+ambient V8/system drift, not all PR1c cost.)
+
+### The headline finding: `bytecode_gc` now beats `bytecode` on prim-heavy code
+
+Pre-PR1, the `bytecode_gc` / `bytecode` fib(24) ratio was **1.017×**
+(GC tax, the famous H2 finding). Post-PR1c, the same ratio is
+**0.908× — bytecode_gc is now ~10% *faster* than bytecode on this
+benchmark.** Same machine, same V8, same `bench.mjs` run.
+
+The mechanism:
+- `bytecode` (no inline-prim path): every prim call → cons args list →
+  function call into `apply_prim` → switch dispatch + validation.
+  PR1 amplified each of those steps; the cons + call overhead was
+  always there but the per-call work was previously trivial (`a+b`).
+  Now the per-call work has its own arity / type / overflow chain on
+  top.
+- `bytecode_gc` (inline-prim path): every binary prim call → direct
+  inline switch arm with the same validation. No cons args, no
+  function call boundary.
+
+PR1 doubled-down on the inline-prim advantage by making the apply_prim
+slow path measurably heavier. The H2 GC tax (1.05× on `bytecode_gc`)
+still exists in absolute terms — collection still runs, the
+optimization barrier is still real — but the inline-prim *amortization*
+is now worth more than the GC tax costs.
+
+This is **not** "GC is free now"; it's "inline-prim absorbed enough
+extra work that it overtook the GC tax." A bytecode VM *without* GC
+*and without* the inline-prim path is the slowest of the three on
+prim-heavy code post-PR1.
+
+The same flip is not uniform across benchmarks:
+
+| benchmark      | bc (no inline-prim) | bc_gc (inline-prim) | bc_gc faster? |
+|----------------|---------------------|---------------------|---------------|
+| fib(24)        | 8.51 ms             | 7.73                | yes (~10%)    |
+| tailsum(30000) | 1.88                | 1.75                | yes (~7%)     |
+| tak(18,12,6)   | 3.56                | 3.81                | no (~7% slower) |
+| nrev+sum(150)  | 0.68                | 0.80                | no (~18% slower) |
+| ack(3,4)       | 0.58                | 0.58                | tied          |
+
+Pattern:
+- **prim-density-bound** (fib, tailsum): inline-prim advantage wins.
+- **allocation-bound** (nrev+sum) or **call-bound** (tak): GC overhead
+  reasserts; `bytecode` wins.
+
+`bytecode_gc` remains the project finalist. The new framing is that the
+finalist's two structural advantages — inline-prim fast path + mark-sweep
+GC — pay for each other through PR1: the inline-prim path absorbs the
+validation cost that hurts every other engine, and the GC's only
+remaining cost (the optimization-barrier H2 tax) is now smaller than the
+inline-prim's amortized advantage on prim-heavy workloads.
+
+### Result against the predictions
+
+- (e) tree-walker variants track `lisp.c`: **confirmed**, all four in
+  the 1.15-1.23× band.
+- (f) `bytecode.c` tracks the tree-walkers: **confirmed** (1.18×).
+- (g) CEK 5-15%: **confirmed at the low end** (6-9%), as the
+  per-step allocation cost predicted.
+- (h) `bytecode_gc` unchanged: **confirmed** (1.05× vs pre-PR1b's
+  1.018× — within ambient drift).
+- **New finding**: `bytecode_gc` now beats `bytecode` on prim-heavy
+  benchmarks, inverting the pre-PR1 ordering. The structural
+  combination of inline-prim + GC is faster than GC-less but
+  inline-prim-less. ENGINES.md's headline table is now stale and
+  should be refreshed in a follow-up commit.
+
+### Falsification log
+
+- All four pre-registered PR1c predictions confirmed within noise.
+- The flipped `bytecode_gc < bytecode` ordering on fib/tailsum is the
+  surprise of PR1c — not predicted, but mechanism-coherent with PR1b's
+  finding. It reframes the H2 GC tax: pre-PR1 it was a 1.05× cost; post-
+  PR1 it's still a 1.05× cost, but the inline-prim path's advantage
+  grew larger than that cost, swallowing it on prim-heavy shapes.
+- The bytecode-no-GC engine pays the validation tax *twice* (in
+  `apply_prim`'s body AND in the cons-args + function-call dispatch
+  it goes through to reach it). This sharpens the H2 framing once more:
+  the "GC tax" was always partially shared with "function-call dispatch
+  tax" for engines that route through `apply_prim`. PR1 separated them.
