@@ -1375,3 +1375,98 @@ most JIT-sensitive substrate for new checks).
 - New finding: the variance between engines' susceptibility to PR1
   overhead will follow the same "JIT-specializability" ordering that
   governs the GC tax (H4). Worth checking at PR1c.
+
+## PR1b — falsification gate confirmed on `bytecode_gc.c`
+
+PR1a's sharpened prediction: `bytecode_gc` regression should land
+substantially below the tree-walker's ~10%, because the validation goes
+into the inline-prim arms (already V8's hot specialized arms) rather than
+through a path the hot loop traverses. The hard falsification gate from
+`gap_closure_plan.md` was ">3% slowdown on `bytecode_gc` fib(24) wasm."
+
+PR1b ports the same validation to `engines/bytecode_gc.c`:
+- `apply_prim` matches `lisp.c`'s shape (inline arity, type checks,
+  overflow trap, variadic +/-/* with i32 binary fast path, new `/` and
+  `mod`).
+- The inline-prim arms in `OP_CALL` and `OP_TAILCALL` gain the same
+  validation: `is_fix` check before arithmetic (PR_EQ stays
+  polymorphic — metacircular uses `(= 'quote 'quote)`), `fits_fix` /
+  `fits_fix64` overflow trap, `is_cons` check on inline car/cdr, and
+  `PR_DIV`/`PR_MOD` join the 2-arg inline range with their
+  divide-by-zero / overflow gates.
+- The "tagged-fix direct add" micro-opt (`r=a+b` exploiting the 00 tag
+  bits) is dropped in favour of `fixval+add+fits_fix+mkfix` — it can't
+  detect the wrap case without i32-overflow inspection. Six wasm ops
+  per binary ADD instead of one, in theory.
+
+### Measured (best-of-25, default 262K-cell arena, 5 runs)
+
+| benchmark      | bytecode_gc PR1b | bytecode_gc pre-PR1b¹ | ratio |
+|----------------|------------------|------------------------|-------|
+| fib(24)        |  7.45 ms         |  7.33 ms               | 1.018× |
+| tak(18,12,6)   |  3.67 ms         |  ~3.56 ms              | 1.031× |
+| ack(3,4)       |  0.57 ms         |  ~0.57 ms              | 1.000× |
+| nrev+sum(150)  |  0.80 ms         |  ~0.87 ms              | 0.920× |
+| tailsum(30000) |  1.62 ms         |  ~1.57 ms              | 1.032× |
+| meta-fib(12)   |  3.42 ms         |  ~3.42 ms              | 1.000× |
+
+¹ Pre-PR1b numbers from the ENGINES.md table and the baseline rows of
+prior bench runs. Same machine, same Node/V8, default arena.
+
+Cross-check: `bytecode.wasm` (no PR1, no GC, untouched by PR1b) moved by
+1.015× over the same 5 runs (7.21 → 7.32 ms). The PR1b absolute movement
+on `bytecode_gc` (1.018× on fib) is essentially the same as ambient
+V8/system variance — the real PR1b cost is ~0% on the V8 hot path.
+
+Parity unchanged: 53/53 cross-engine programs agree; **90/90 PR1
+assertions pass across {lisp.wasm, bytecode_gc.wasm}** (45 programs ×
+2 engines); `test_bc.mjs` still 70/70; metacircular fib(8) returns 21.
+
+### Result against the predictions
+
+(a) **Confirmed.** Pre-registered hard gate (`bytecode_gc` fib >3%) not
+    triggered (~1.6% measured, indistinguishable from ambient variance).
+    Sharpened mechanism — "inline-prim arms absorb the validation
+    without breaking V8 specialization" — vindicated.
+
+(d) **Confirmed.** No new GC root issues. `test_bc.mjs`'s GC-pressure
+    suite passes; `bytecode_gc` fib(20) with default arena unchanged
+    (gc_count column shows the same numbers as pre-PR1b in the bench
+    output: `0 / 4 / 43 / 1` for fib(24)).
+
+### What three measurements together say (PR1 mechanism, sharpened)
+
+The pre-PR1a prediction said the validation cost would live "on the
+cold prim path." Two pilots in, the picture is more precise:
+
+- **Engines without an inline-prim fast path pay the full validation
+  cost on every binary op** (tree-walker: ~10% on prim-heavy
+  benchmarks). For these, `apply_prim` *is* the hot path.
+- **Engines with an inline-prim fast path absorb the validation
+  essentially for free** (`bytecode_gc`: ~0% measurable), provided
+  the validation is structured to stay inside V8's specialization
+  window — single is_fix branch + arithmetic + fits_fix branch per
+  arm, no function calls.
+
+This predicts PR1c's per-engine ordering precisely:
+- `lisp_trampoline`, `lisp_gc`, `lisp_region` — all tree-walkers, no
+  inline-prim path: expect ~10% on fib/tailsum (matching `lisp.c`).
+- `cek`, `cek_gc` — CEK machine, no inline-prim path: expect ~5-15%
+  on prim-heavy benchmarks. CEK has its own per-step allocation cost
+  that dilutes the validation overhead as a fraction.
+- `bytecode` (no GC) — has the same inline-prim path as `bytecode_gc`:
+  expect ~0% on fib/tak/ack like `bytecode_gc`.
+
+The "JIT-specializability" hypothesis from PR1a's falsification log
+holds: the engines whose hot loop V8 specializes tightest get the
+inline-prim arms validated for free; the engines V8 can't specialize as
+hard pay the full cost. Same ordering that drives the H4 GC tax. PR1c
+will test this directly.
+
+### Falsification log
+
+- Both pre-registered predictions ((a) and (d)) confirmed within noise.
+- The sharpened mechanism story ("inline-prim arms absorb validation")
+  is now measured, not just argued. The remaining six engines port
+  mechanically; the ones with no inline-prim path will look like
+  `lisp.c`, the ones with it will look like `bytecode_gc`.

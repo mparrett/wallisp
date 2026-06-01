@@ -43,7 +43,7 @@ void* memcpy(void* d, const void* s, unsigned long n){ u8* a=(u8*)d; const u8* b
 #define is_sym(v) (tagof(v)==TAG_SYM)
 
 enum { SP_NIL=0, SP_T, SP_ERR, SP_UNBOUND,
-       PR_CONS, PR_CAR, PR_CDR, PR_ADD, PR_SUB, PR_MUL, PR_EQ, PR_LT,
+       PR_CONS, PR_CAR, PR_CDR, PR_ADD, PR_SUB, PR_MUL, PR_DIV, PR_MOD, PR_EQ, PR_LT,
        PR_NULLP, PR_PAIRP, PR_LISTQ, SP_COUNT };
 #define NIL mkspec(SP_NIL)
 #define TRUE mkspec(SP_T)
@@ -146,16 +146,73 @@ static u32 read_expr(){
   return read_atom();
 }
 
-// ---- primitives (identical) ------------------------------------------------
+// ---- primitives (PR1: validated; see engines/lisp.c for the design notes) --
+#define FIX_MAX  ((i32) 0x1FFFFFFF)   //  536870911
+#define FIX_MIN  (-(i32)0x20000000)   // -536870912
+static int fits_fix(i32 v){ return v >= FIX_MIN && v <= FIX_MAX; }
+static int fits_fix64(long long v){ return v >= FIX_MIN && v <= FIX_MAX; }
+
+// Called only when the inline-prim fast path in OP_CALL/OP_TAILCALL doesn't
+// match: variadic +/-/* with n≥3, plus any prim invoked with a wrong arity.
+// The hot path (binary +/-/* /=/<, unary car/cdr/null?/pair?/list?) is
+// inlined and validated at the VM level — apply_prim is the slow path.
 static u32 apply_prim(u32 prim,u32 args){
-  u32 id=prim>>2; u32 a=car(args), b=car(cdr(args));
+  u32 id=prim>>2;
+  if(!is_cons(args)) return ERR;
+  u32 a  = car(args);
+  u32 d0 = cdr(args);
+
   switch(id){
-    case PR_CONS:return cons(a,b); case PR_CAR:return car(a); case PR_CDR:return cdr(a);
-    case PR_ADD:return mkfix(fixval(a)+fixval(b)); case PR_SUB:return mkfix(fixval(a)-fixval(b));
-    case PR_MUL:return mkfix(fixval(a)*fixval(b));
-    case PR_EQ:return (a==b)?TRUE:NIL; case PR_LT:return (fixval(a)<fixval(b))?TRUE:NIL;
-    case PR_NULLP:return is_nil(a)?TRUE:NIL; case PR_PAIRP:return is_cons(a)?TRUE:NIL;
-    case PR_LISTQ:return (is_nil(a)||is_cons(a))?TRUE:NIL;
+    case PR_NULLP: if(!is_nil(d0)) return ERR; return is_nil(a)?TRUE:NIL;
+    case PR_PAIRP: if(!is_nil(d0)) return ERR; return is_cons(a)?TRUE:NIL;
+    case PR_LISTQ: if(!is_nil(d0)) return ERR; return (is_nil(a)||is_cons(a))?TRUE:NIL;
+    case PR_CAR:   if(!is_nil(d0) || !is_cons(a)) return ERR; return cells[considx(a)].car;
+    case PR_CDR:   if(!is_nil(d0) || !is_cons(a)) return ERR; return cells[considx(a)].cdr;
+  }
+
+  if(!is_cons(d0)) return ERR;
+  u32 b  = car(d0);
+  u32 d1 = cdr(d0);
+
+  switch(id){
+    case PR_CONS:  if(!is_nil(d1)) return ERR; return cons(a,b);
+    case PR_EQ:    if(!is_nil(d1)) return ERR; return (a==b)?TRUE:NIL;
+    case PR_LT:    if(!is_nil(d1) || !is_fix(a) || !is_fix(b)) return ERR;
+                   return (fixval(a)<fixval(b))?TRUE:NIL;
+    case PR_DIV: {
+      if(!is_nil(d1) || !is_fix(a) || !is_fix(b)) return ERR;
+      i32 bv=fixval(b); if(bv==0) return ERR;
+      i32 r=fixval(a)/bv; if(!fits_fix(r)) return ERR;
+      return mkfix(r);
+    }
+    case PR_MOD: {
+      if(!is_nil(d1) || !is_fix(a) || !is_fix(b)) return ERR;
+      i32 bv=fixval(b); if(bv==0) return ERR;
+      return mkfix(fixval(a)%bv);
+    }
+    case PR_ADD: case PR_SUB: case PR_MUL: {
+      if(!is_fix(a) || !is_fix(b)) return ERR;
+      i32 av=fixval(a), bv=fixval(b), r;
+      if(id==PR_MUL){
+        long long m=(long long)av*(long long)bv;
+        if(!fits_fix64(m)) return ERR;
+        r=(i32)m;
+      } else {
+        r=(id==PR_ADD)?(av+bv):(av-bv);
+        if(!fits_fix(r)) return ERR;
+      }
+      if(is_nil(d1)) return mkfix(r);
+      long long acc=r;
+      for(u32 p=d1; is_cons(p); p=cdr(p)){
+        u32 v=car(p); if(!is_fix(v)) return ERR;
+        long long t = (id==PR_ADD) ? acc + (long long)fixval(v)
+                    : (id==PR_SUB) ? acc - (long long)fixval(v)
+                    :                acc * (long long)fixval(v);
+        if(!fits_fix64(t)) return ERR;
+        acc=t;
+      }
+      return mkfix((i32)acc);
+    }
   }
   return ERR;
 }
@@ -370,21 +427,26 @@ static u32 run(u32 entry){
         if(is_prim(fn)){
           u32 id=fn>>2;
           if(n==2 && id>=PR_ADD && id<=PR_LT){      // inline 2-arg arith/cmp: no cons
+            // PR1: type-check, overflow-trap, div-by-zero. PR_EQ stays
+            // polymorphic; metacircular eval uses `(= 'quote 'quote)`.
             u32 a=vstack[R_vsp-2], b=vstack[R_vsp-1], r;
+            if(id != PR_EQ && (!is_fix(a) || !is_fix(b))) return ERR;
             switch(id){
-              case PR_ADD: r=a+b; break;             // tagged-fixnum direct add (tag bits zero)
-              case PR_SUB: r=a-b; break;
-              case PR_MUL: r=mkfix(fixval(a)*fixval(b)); break;
+              case PR_ADD: { i32 s=fixval(a)+fixval(b); if(!fits_fix(s)) return ERR; r=mkfix(s); break; }
+              case PR_SUB: { i32 d=fixval(a)-fixval(b); if(!fits_fix(d)) return ERR; r=mkfix(d); break; }
+              case PR_MUL: { long long m=(long long)fixval(a)*(long long)fixval(b); if(!fits_fix64(m)) return ERR; r=mkfix((i32)m); break; }
+              case PR_DIV: { i32 bv=fixval(b); if(bv==0) return ERR; i32 q=fixval(a)/bv; if(!fits_fix(q)) return ERR; r=mkfix(q); break; }
+              case PR_MOD: { i32 bv=fixval(b); if(bv==0) return ERR; r=mkfix(fixval(a)%bv); break; }
               case PR_EQ:  r=(a==b)?TRUE:NIL; break;
-              default:     r=((i32)a<(i32)b)?TRUE:NIL; break; // PR_LT
+              default:     r=(fixval(a)<fixval(b))?TRUE:NIL; break; // PR_LT
             }
             R_vsp-=3; vstack[R_vsp++]=r;
           } else if(n==1 && (id==PR_CAR||id==PR_CDR||(id>=PR_NULLP&&id<=PR_LISTQ))){
             // inline 1-arg car/cdr/null?/pair?/list?: skip arg-list cons + apply_prim
             u32 a=vstack[R_vsp-1], r;
             switch(id){
-              case PR_CAR:   r=is_cons(a)?cells[considx(a)].car:NIL; break;
-              case PR_CDR:   r=is_cons(a)?cells[considx(a)].cdr:NIL; break;
+              case PR_CAR:   if(!is_cons(a)) return ERR; r=cells[considx(a)].car; break;
+              case PR_CDR:   if(!is_cons(a)) return ERR; r=cells[considx(a)].cdr; break;
               case PR_NULLP: r=is_nil(a)?TRUE:NIL; break;
               case PR_PAIRP: r=is_cons(a)?TRUE:NIL; break;
               default:       r=(is_nil(a)||is_cons(a))?TRUE:NIL; break; // PR_LISTQ
@@ -422,20 +484,23 @@ static u32 run(u32 entry){
           u32 id=fn>>2; u32 r;
           if(n==2 && id>=PR_ADD && id<=PR_LT){      // inline 2-arg arith/cmp: no cons
             u32 a=vstack[R_vsp-2], b=vstack[R_vsp-1];
+            if(id != PR_EQ && (!is_fix(a) || !is_fix(b))) return ERR;
             switch(id){
-              case PR_ADD: r=a+b; break;
-              case PR_SUB: r=a-b; break;
-              case PR_MUL: r=mkfix(fixval(a)*fixval(b)); break;
+              case PR_ADD: { i32 s=fixval(a)+fixval(b); if(!fits_fix(s)) return ERR; r=mkfix(s); break; }
+              case PR_SUB: { i32 d=fixval(a)-fixval(b); if(!fits_fix(d)) return ERR; r=mkfix(d); break; }
+              case PR_MUL: { long long m=(long long)fixval(a)*(long long)fixval(b); if(!fits_fix64(m)) return ERR; r=mkfix((i32)m); break; }
+              case PR_DIV: { i32 bv=fixval(b); if(bv==0) return ERR; i32 q=fixval(a)/bv; if(!fits_fix(q)) return ERR; r=mkfix(q); break; }
+              case PR_MOD: { i32 bv=fixval(b); if(bv==0) return ERR; r=mkfix(fixval(a)%bv); break; }
               case PR_EQ:  r=(a==b)?TRUE:NIL; break;
-              default:     r=((i32)a<(i32)b)?TRUE:NIL; break; // PR_LT
+              default:     r=(fixval(a)<fixval(b))?TRUE:NIL; break; // PR_LT
             }
             R_vsp-=3; vstack[R_vsp++]=r;
           } else if(n==1 && (id==PR_CAR||id==PR_CDR||(id>=PR_NULLP&&id<=PR_LISTQ))){
             // inline 1-arg car/cdr/null?/pair?/list?: skip arg-list cons + apply_prim
             u32 a=vstack[R_vsp-1];
             switch(id){
-              case PR_CAR:   r=is_cons(a)?cells[considx(a)].car:NIL; break;
-              case PR_CDR:   r=is_cons(a)?cells[considx(a)].cdr:NIL; break;
+              case PR_CAR:   if(!is_cons(a)) return ERR; r=cells[considx(a)].car; break;
+              case PR_CDR:   if(!is_cons(a)) return ERR; r=cells[considx(a)].cdr; break;
               case PR_NULLP: r=is_nil(a)?TRUE:NIL; break;
               case PR_PAIRP: r=is_cons(a)?TRUE:NIL; break;
               default:       r=(is_nil(a)||is_cons(a))?TRUE:NIL; break; // PR_LISTQ
@@ -470,6 +535,7 @@ static void init(){
   global_define(intern("nil",3),NIL); global_define(intern("t",1),TRUE);
   bindp("cons",mkspec(PR_CONS)); bindp("car",mkspec(PR_CAR)); bindp("cdr",mkspec(PR_CDR));
   bindp("+",mkspec(PR_ADD)); bindp("-",mkspec(PR_SUB)); bindp("*",mkspec(PR_MUL));
+  bindp("/",mkspec(PR_DIV)); bindp("mod",mkspec(PR_MOD));
   bindp("=",mkspec(PR_EQ)); bindp("<",mkspec(PR_LT));
   bindp("null?",mkspec(PR_NULLP)); bindp("pair?",mkspec(PR_PAIRP)); bindp("list?",mkspec(PR_LISTQ));
 }

@@ -35,6 +35,7 @@ const ENGINES = [
 // delete this gate.
 const SUPPORTS_PR1 = new Set([
   'lisp.wasm',
+  'bytecode_gc.wasm',
 ]);
 
 // Programs cover: numeric arithmetic, list ops, quote, cond/if, let, lambda,
