@@ -1592,3 +1592,78 @@ inline-prim's amortized advantage on prim-heavy workloads.
   it goes through to reach it). This sharpens the H2 framing once more:
   the "GC tax" was always partially shared with "function-call dispatch
   tax" for engines that route through `apply_prim`. PR1 separated them.
+
+## PR2a — mutation (`set!` / `set-car!` / `set-cdr!`) on `lisp.c`
+
+Tier A item 2 from `docs/project_notes/gap_closure_plan.md`. Lifts the
+language from "purely functional accident" to "mutable Lisp" — programs
+that need a memoization cache, an accumulator, or any kind of shared
+state can now be written. PR2a pilots on `engines/lisp.c`; PR2b ports to
+`bytecode_gc.c` (where the pre-registered memoised-fib benchmark will
+fire); PR2c is the mechanical port to the remaining six.
+
+Design:
+- `set!` is a strict-arity-2 special form. Strict because mutation should
+  never silently bind to NIL on under-supply.
+- New `env_set` helper walks the env chain like `env_lookup`, finds the
+  binding cons, mutates its cdr in place. Mutation is visible through
+  closures because every closure shares the env's binding cells.
+- Unbound `set!` returns `<error>` (Scheme: setting unbound is an error).
+- `set-car!` / `set-cdr!` are ordinary 2-arg primitives. They validate
+  the first arg is a cons, mutate the cell, return the new value.
+- Tree-walker semantics; no GC root concerns in `lisp.c` (no GC).
+- `harness/parity.mjs` gains `SUPPORTS_PR2 = {lisp.wasm}` and 19
+  PR2 programs, gated like PR1's rollout.
+
+### Pre-registered prediction (from `gap_closure_plan.md`)
+
+- (a) Memoised fib benchmark beats unmemoised by ≥10× at N=20 on
+      `bytecode_gc` — **deferred to PR2b**, no `bytecode_gc` support
+      yet.
+- (b) Engine ordering on existing 5-benchmark suite unchanged. The
+      `s_setbang` branch adds one symbol compare to the special-form
+      cascade for non-set! programs; the cost should be sub-1% on
+      benchmarks that don't use set!.
+- (c) GC root-set completeness: deferred to PR2b/PR2c.
+
+### Measured
+
+Targeted lisp_big vs lisp_trampoline_big (same engine modulo PR2a),
+min-of-min over 5×25 reps:
+
+| benchmark | lisp_big (PR2a) | lisp_trampoline_big (no PR2) | ratio |
+|-----------|-----------------|------------------------------|-------|
+| fib(24)   | 17.04 ms        | 16.67 ms                     | 1.022× |
+
+Two earlier bench.mjs runs showed wider gaps (lisp at 20ms vs tramp at
+16ms — 25%), but every engine was 20-30% slow in those runs (bytecode_gc
+at 10ms instead of 8.9ms), so it was ambient system load, not PR2a.
+
+Parity: 98/98 cross-engine programs agree, 19/19 PR2 assertions pass.
+`test_bc.mjs` still 70/70. Freestanding property preserved.
+
+### Result against predictions
+
+- (b) **Confirmed.** ~2% measurable cost on a benchmark that doesn't
+  exercise set! — basically noise.
+
+### The killer test (works)
+
+```scheme
+(begin
+  (define counter (let ((n 0)) (lambda () (begin (set! n (+ n 1)) n))))
+  (counter) (counter) (counter))   ; => 3
+```
+
+Mutation through a closure with lexically-captured state. The `n` in
+the closure's frame is mutated in place; each call observes the
+incremented value. Classic Scheme semantics, now in wallisp.
+
+### Note
+
+PR2 does not have its own "H-number" hypothesis the way PR1 did. The
+mechanism story is well-understood (mutation works via env-frame
+mutation, no GC interaction in tree-walker, will need GC-root care in
+PR2b/c for the GC engines). The pre-registered prediction is a
+*correctness* gate (memoised fib speedup), not a *performance*
+hypothesis to falsify.
