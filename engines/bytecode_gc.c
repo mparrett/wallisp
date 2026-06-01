@@ -44,7 +44,10 @@ void* memcpy(void* d, const void* s, unsigned long n){ u8* a=(u8*)d; const u8* b
 
 enum { SP_NIL=0, SP_T, SP_ERR, SP_UNBOUND,
        PR_CONS, PR_CAR, PR_CDR, PR_ADD, PR_SUB, PR_MUL, PR_DIV, PR_MOD, PR_EQ, PR_LT,
-       PR_NULLP, PR_PAIRP, PR_LISTQ, PR_SETCAR, PR_SETCDR, SP_COUNT };
+       PR_NULLP, PR_PAIRP, PR_LISTQ, PR_SETCAR, PR_SETCDR,
+       // EXP1: string primitives (bytecode_gc only; other engines leave these unbound)
+       PR_STRINGP, PR_STRLEN, PR_STRREF, PR_STREQ, PR_STRAPPEND,
+       SP_COUNT };
 #define NIL mkspec(SP_NIL)
 #define TRUE mkspec(SP_T)
 #define ERR mkspec(SP_ERR)
@@ -107,7 +110,61 @@ static u32 intern(const char*s,u32 len){
   u32 i=sym_top++; for(u32 k=0;k<len;k++) symname[i][k]=s[k]; symlen[i]=len;
   return mksym(i);
 }
-static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_closure,s_cond,s_else,s_setbang;
+static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_closure,s_cond,s_else,s_setbang,s_string;
+
+// ════════════════════════════════════════════════════════════════════════════
+// EXP1 — STRING HEAP (bytecode_gc only). Pre-registered (gap_closure_plan.md
+// EXP1): adding a variable-length heap with a type-tagged sweep loop will
+// raise the fib(24) GC tax from 1.05× wasm baseline to 1.15-1.30×, because
+// V8 loses specialisation over the gc() function once it grows a
+// non-uniform-sized sweep. Falsification windows: ≤1.10× (V8 specialised
+// over it anyway), >1.40× (broke a different optimisation than the
+// cons-reaches-gc one H2 attributed).
+//
+// Encoding: a string value is a cons-wrapper (s_string . fixnum-offset).
+// The offset points into strheap, where each entry is:
+//   u32 header — bit 31 = mark, bits 0..30 = length-in-bytes
+//   u8  data[length]
+//   padding up to the next 4-byte boundary
+// Wrapper cells live in the cons arena and are marked / swept normally. The
+// strheap walk in gc() resets mark bits on live entries; unmarked entries
+// are not yet reclaimed (variable-length free list would defeat the
+// simplicity that lets this be a clean experiment). fib(24) allocates zero
+// strings — strheap_top stays 0 — so the new sweep loop iterates 0 times.
+// That's the point: we're testing whether the loop's *presence* in gc()
+// changes V8's compilation strategy, not whether walking strings is slow.
+// ════════════════════════════════════════════════════════════════════════════
+#define STR_HEAP_BYTES 1048576u
+static u8  strheap[STR_HEAP_BYTES];
+static u32 strheap_top = 0;
+// In-flight string allocation: set after we've reserved space in strheap but
+// before the wrapper cons exists. gc() roots from here so the new entry's
+// mark bit is set even if the cons() triggers a collection.
+#define STR_NONE 0xFFFFFFFFu
+static u32 g_pending_str_off = STR_NONE;
+
+static u32 str_entry_size(u32 len){ return 4u + ((len + 3u) & ~3u); }
+static int is_string(u32 v){ return is_cons(v) && cells[considx(v)].car == s_string; }
+static u32 str_off(u32 v){ return (u32)fixval(cells[considx(v)].cdr); }
+static u32 str_len(u32 v){ return *(u32*)(strheap + str_off(v)) & 0x7FFFFFFFu; }
+static const u8* str_data(u32 v){ return strheap + str_off(v) + 4u; }
+
+static u32 alloc_string(const u8* src, u32 len){
+  // Tighten to 30 bits so the offset fits a fixnum without overflow concerns
+  // (alloc cap is 1 MB, well within the FIX range).
+  u32 need = str_entry_size(len);
+  if(strheap_top + need > STR_HEAP_BYTES){ g_oom = 1; return ERR; }
+  u32 off = strheap_top;
+  *(u32*)(strheap + off) = len & 0x7FFFFFFFu;          // mark = 0
+  for(u32 k = 0; k < len; k++) strheap[off + 4u + k] = src[k];
+  // Pad bytes (if any) untouched — fine; the sweep skips them by length.
+  strheap_top += need;
+  // Cons the wrapper. Pin off so a GC mid-cons keeps the entry live.
+  g_pending_str_off = off;
+  u32 wrapper = cons(s_string, mkfix((i32)off));
+  g_pending_str_off = STR_NONE;
+  return wrapper;
+}
 
 // ---- reader (identical) ----------------------------------------------------
 static const char*rp; static const char*rend;
@@ -138,11 +195,41 @@ static u32 read_atom(){
     if(isnum) return mkfix(neg?-val:val); }
   return intern(start,len);
 }
+// EXP1: string literal "...". Backslash-escape: \" \\ \n \t.
+// Writes directly into strheap (skipping the alloc_string intermediate copy
+// since we don't have the length up front). Compile-phase only; gc isn't
+// enabled yet, so no rooting needed for partial writes.
+static u32 read_string(){
+  rp++;                                  // consume opening "
+  if(strheap_top + 4u > STR_HEAP_BYTES){ g_oom = 1; return ERR; }
+  u32 off = strheap_top;
+  u32 n   = 0;
+  while(rp < rend && *rp != '"'){
+    char c = *rp++;
+    if(c == '\\' && rp < rend){
+      char e = *rp++;
+      if(e == 'n') c = '\n';
+      else if(e == 't') c = '\t';
+      else c = e;                        // \\ \" pass through
+    }
+    if(off + 4u + n >= STR_HEAP_BYTES){ g_oom = 1; return ERR; }
+    strheap[off + 4u + n] = (u8)c;
+    n++;
+  }
+  if(rp < rend) rp++;                    // consume closing "
+  *(u32*)(strheap + off) = n & 0x7FFFFFFFu;
+  strheap_top = off + str_entry_size(n);
+  g_pending_str_off = off;
+  u32 wrapper = cons(s_string, mkfix((i32)off));
+  g_pending_str_off = STR_NONE;
+  return wrapper;
+}
 static u32 read_expr(){
   skipws(); if(rp>=rend) return ERR;
   char c=*rp;
   if(c=='('){rp++; return read_list();}
   if(c=='\''){rp++; u32 e=read_expr(); return cons(s_quote,cons(e,NIL));}
+  if(c=='"'){ return read_string(); }
   return read_atom();
 }
 
@@ -168,6 +255,10 @@ static u32 apply_prim(u32 prim,u32 args){
     case PR_LISTQ: if(!is_nil(d0)) return ERR; return (is_nil(a)||is_cons(a))?TRUE:NIL;
     case PR_CAR:   if(!is_nil(d0) || !is_cons(a)) return ERR; return cells[considx(a)].car;
     case PR_CDR:   if(!is_nil(d0) || !is_cons(a)) return ERR; return cells[considx(a)].cdr;
+    // EXP1: unary string primitives (the binary ones live below with the
+    // arithmetic — they share the `(!is_cons(d0)) return ERR;` arity gate).
+    case PR_STRINGP: if(!is_nil(d0)) return ERR; return is_string(a) ? TRUE : NIL;
+    case PR_STRLEN:  if(!is_nil(d0) || !is_string(a)) return ERR; return mkfix((i32)str_len(a));
   }
 
   if(!is_cons(d0)) return ERR;
@@ -217,6 +308,46 @@ static u32 apply_prim(u32 prim,u32 args){
       }
       return mkfix((i32)acc);
     }
+    // EXP1: binary string primitives. Unary ones (string?, string-length)
+    // live up in the first switch with the other unary prims.
+    case PR_STRREF: {
+      if(!is_nil(d1) || !is_string(a) || !is_fix(b)) return ERR;
+      i32 idx = fixval(b); u32 len = str_len(a);
+      if(idx < 0 || (u32)idx >= len) return ERR;
+      return mkfix((i32)str_data(a)[idx]);
+    }
+    case PR_STREQ: {
+      if(!is_nil(d1) || !is_string(a) || !is_string(b)) return ERR;
+      u32 la = str_len(a), lb = str_len(b);
+      if(la != lb) return NIL;
+      const u8* da = str_data(a); const u8* db = str_data(b);
+      for(u32 k = 0; k < la; k++) if(da[k] != db[k]) return NIL;
+      return TRUE;
+    }
+    case PR_STRAPPEND: {
+      if(!is_nil(d1) || !is_string(a) || !is_string(b)) return ERR;
+      u32 la = str_len(a), lb = str_len(b);
+      // Reserve once; copy both halves. alloc_string takes a single buffer,
+      // so do it manually here (no intermediate buffer needed — write straight
+      // into strheap, then build the wrapper).
+      u32 total = la + lb;
+      u32 need = str_entry_size(total);
+      if(strheap_top + need > STR_HEAP_BYTES){ g_oom = 1; return ERR; }
+      u32 off = strheap_top;
+      *(u32*)(strheap + off) = total & 0x7FFFFFFFu;
+      // a and b may move strheap_top? No — we already reserved. But the data
+      // pointers (str_data) are stable across this routine: no allocation,
+      // no GC. Safe to memcpy directly.
+      const u8* da = str_data(a);
+      const u8* db = str_data(b);
+      for(u32 k = 0; k < la; k++) strheap[off + 4u + k]      = da[k];
+      for(u32 k = 0; k < lb; k++) strheap[off + 4u + la + k] = db[k];
+      strheap_top += need;
+      g_pending_str_off = off;
+      u32 wrapper = cons(s_string, mkfix((i32)off));
+      g_pending_str_off = STR_NONE;
+      return wrapper;
+    }
   }
   return ERR;
 }
@@ -264,6 +395,9 @@ static int resolve(u32 sym,u32 cenv,u32*d,u32*i){
 // tail=1 (its last expression is, by definition, in tail position).
 static void compile(u32 x,u32 cenv,int tail){
   if(is_fix(x) || tagof(x)==TAG_SPEC){ emit(OP_CONST); emit(x); if(tail)emit(OP_RET); return; }
+  // EXP1: string literal — self-evaluating. The wrapper cons is treated as
+  // a constant value; gc()'s OP_CONST root walk will reach it through code[].
+  if(is_string(x)){ emit(OP_CONST); emit(x); if(tail)emit(OP_RET); return; }
   if(is_sym(x)){
     u32 d,i;
     if(resolve(x,cenv,&d,&i)){ emit(OP_LOADL); emit(d); emit(i); }
@@ -386,6 +520,14 @@ static void mark(u32 v){
   if(markbit[i]) return;
   markbit[i]=1;
   markstk[msp++]=i;
+  // EXP1: if this cell is a string wrapper, also live-mark its strheap entry.
+  // s_string == 0 before init() finishes; harmless here because gc() only
+  // runs after init(). Branch is hot when strheap is in use; V8 may or may
+  // not specialise across it — that's part of what H6 is measuring.
+  if(cells[i].car == s_string){
+    u32 off = (u32)fixval(cells[i].cdr);
+    if(off < STR_HEAP_BYTES) *(u32*)(strheap + off) |= 0x80000000u;
+  }
 }
 static void gc(void){
   g_numgc++;
@@ -410,12 +552,30 @@ static void gc(void){
       }
     }
   }
+  // EXP1: in-flight string allocation (between alloc and wrapper-cons).
+  if(g_pending_str_off != STR_NONE){
+    *(u32*)(strheap + g_pending_str_off) |= 0x80000000u;
+  }
   // --- trace (iterative; mark stack avoids deep C recursion) ---
   while(msp>0){ u32 i=markstk[--msp]; mark(cells[i].car); mark(cells[i].cdr); }
   // --- sweep: thread every unmarked cell onto the free list ---
   freelist=FREE_END;
   for(u32 i=0;i<MAX_CELLS;i++)
     if(!markbit[i]){ cells[i].cdr=freelist; freelist=i; }
+  // EXP1: type-tagged sweep over the variable-length string heap. For each
+  // entry: clear its mark for the next cycle. Unmarked entries leak for now
+  // (no variable-length free list — out of EXP1 scope). The loop runs zero
+  // iterations on programs that don't use strings; the *presence* of the
+  // loop in gc() is what H6's prediction is about (V8 specialisation, not
+  // runtime cost).
+  { u32 sp = 0;
+    while(sp < strheap_top){
+      u32 *hdr = (u32*)(strheap + sp);
+      u32 len  = *hdr & 0x7FFFFFFFu;
+      *hdr = len;                                  // mark = 0 for next cycle
+      sp += str_entry_size(len);
+    }
+  }
 }
 
 static u32 run(u32 entry){
@@ -563,12 +723,14 @@ static void bindp(const char*nm,u32 prim){ u32 l=0; while(nm[l])l++; global_defi
 static void init(){
   cell_top=0; sym_top=0; g_oom=0; cp=0; g_cerr=0; g_numgc=0; gc_enabled=0;
   freelist=FREE_END;
+  strheap_top=0; g_pending_str_off=STR_NONE;        // EXP1
   for(u32 i=0;i<MAX_SYMS;i++) gval[i]=UNBOUND;
   s_quote=intern("quote",5); s_if=intern("if",2); s_define=intern("define",6);
   s_lambda=intern("lambda",6); s_let=intern("let",3); s_begin=intern("begin",5);
   s_closure=intern("%closure",8);
   s_cond=intern("cond",4); s_else=intern("else",4);
   s_setbang=intern("set!",4);
+  s_string=intern("%string",7);                     // EXP1
   global_define(intern("nil",3),NIL); global_define(intern("t",1),TRUE);
   bindp("cons",mkspec(PR_CONS)); bindp("car",mkspec(PR_CAR)); bindp("cdr",mkspec(PR_CDR));
   bindp("+",mkspec(PR_ADD)); bindp("-",mkspec(PR_SUB)); bindp("*",mkspec(PR_MUL));
@@ -576,6 +738,12 @@ static void init(){
   bindp("=",mkspec(PR_EQ)); bindp("<",mkspec(PR_LT));
   bindp("null?",mkspec(PR_NULLP)); bindp("pair?",mkspec(PR_PAIRP)); bindp("list?",mkspec(PR_LISTQ));
   bindp("set-car!",mkspec(PR_SETCAR)); bindp("set-cdr!",mkspec(PR_SETCDR));
+  // EXP1
+  bindp("string?",       mkspec(PR_STRINGP));
+  bindp("string-length", mkspec(PR_STRLEN));
+  bindp("string-ref",    mkspec(PR_STRREF));
+  bindp("string=?",      mkspec(PR_STREQ));
+  bindp("string-append", mkspec(PR_STRAPPEND));
 }
 
 // ---- printer (identical) ---------------------------------------------------
@@ -597,6 +765,21 @@ static void print_val(u32 v){
   if(is_prim(v)){emits("<primitive>");return;}
   if(is_sym(v)){u32 i=symidx(v);for(u32 k=0;k<symlen[i];k++)oemit(symname[i][k]);return;}
   if(is_closure(v)){emits("<lambda>");return;}
+  // EXP1: print "...". Same escape set as the reader (\" \\ \n \t pass through).
+  if(is_string(v)){
+    oemit('"');
+    u32 len = str_len(v);
+    const u8* d = str_data(v);
+    for(u32 k = 0; k < len; k++){
+      char c = (char)d[k];
+      if(c == '"' || c == '\\') { oemit('\\'); oemit(c); }
+      else if(c == '\n') { oemit('\\'); oemit('n'); }
+      else if(c == '\t') { oemit('\\'); oemit('t'); }
+      else oemit(c);
+    }
+    oemit('"');
+    return;
+  }
   if(is_cons(v)){ oemit('('); u32 p=v;int first=1;
     while(is_cons(p)){if(!first)oemit(' ');first=0;print_val(car(p));p=cdr(p);}
     if(!is_nil(p)){emits(" . ");print_val(p);} oemit(')'); }

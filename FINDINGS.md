@@ -2061,3 +2061,150 @@ But "work" is not "fast."
   generators-via-call/cc are widely considered slow, which is why most
   Schemes have a dedicated coroutine primitive. We just measured it
   ourselves.
+
+---
+
+## H6 — non-uniform heap GC tax on `bytecode_gc.c` (FALSIFIED, lower window)
+
+Pre-registered (`docs/project_notes/gap_closure_plan.md` EXP1): adding a
+separate string heap with a type-tagged sweep loop to `bytecode_gc.c`
+will raise the fib(24) GC tax from its post-PR1c baseline to 1.15–1.30×
+because V8 loses specialisation on `gc()` once it grows a non-uniform
+sweep over variable-length entries. Falsification windows:
+- ≤1.10× → V8 specialised over the type-dispatch anyway; string heap
+  was free. Interesting — would update the mechanism model.
+- >1.40× → type-dispatch broke a different optimisation than the
+  cons-reaches-gc one H2 attributed.
+
+**Result: Δ = 1.00× (0.9982× to be precise). Falsified squarely in the
+lower window.** V8 specialised straight through everything.
+
+### What was implemented
+
+`engines/bytecode_gc.c` only. ~140 lines of additions:
+
+- **String value** = wrapper cons `(s_string . fixnum-offset)` indexing
+  into `strheap[1MB]`. No new tag bits used; the cons-arena GC tracks
+  the wrapper as a normal cell, and the strheap lives in parallel.
+- **strheap entry layout**: `u32 header` (bit 31 = mark; bits 0..30 =
+  length) + length bytes + padding to 4-byte boundary. The next entry
+  starts at `4 + ((len+3)&~3)` past the previous header.
+- **Reader**: `"..."` literals with `\" \\ \n \t` escapes. Writes
+  straight into strheap (no intermediate buffer — wasm stacks are tight).
+- **Printer**: round-trips through the same escape table.
+- **Compiler**: string wrappers self-evaluate (one extra branch in
+  `compile()`); OP_CONST emits them like fixnums.
+- **5 primitives**: `string?`, `string-length`, `string-ref`, `string=?`,
+  `string-append`. The unary ones (`string?`, `string-length`) live in
+  the first switch in `apply_prim` alongside the other unary prims —
+  putting them in the second switch with the binary prims silently
+  errors on n=1 because that switch is gated by `if(!is_cons(d0)) return
+  ERR;`. PR1 footgun, re-encountered.
+- **GC**: `mark(v)` now flips the strheap mark bit when it sees a
+  string wrapper (one extra branch on every mark hit). `gc()` gained an
+  in-flight rooting step for `g_pending_str_off` (a string allocated
+  but not yet wrapped in a cons), and a new sweep loop that walks
+  strheap entries to reset mark bits for the next cycle. No
+  variable-length reclamation yet — that's out of EXP1's measurement
+  scope; strings leak until eval_source() resets via init(). 1 MB heap
+  fits a lot of fib-shaped string allocation.
+- **Non-`bytecode_gc` engines**: untouched. `string?` etc. are unbound;
+  any reference returns `<error>`. Parity programs that don't touch
+  strings continue to agree across all 8 engines (117/117 unchanged).
+
+### Benchmark
+
+`fib(24)` on `bytecode_gc.wasm` vs `bytecode_big.wasm`, min of 5 passes
+× 50 reps. Measured before EXP1 (commit `261efef`) and after, in the
+same shell session minutes apart. Both rebuilt from clean source via
+`build.sh` against the same Homebrew clang.
+
+| measure                                    | pre-EXP1  | post-EXP1 | Δ      |
+|--------------------------------------------|-----------|-----------|--------|
+| `bytecode_gc.wasm` fib(24)                 | 7.579 ms  | 7.939 ms  | 1.048× |
+| `bytecode_big.wasm` fib(24)                | 8.375 ms  | 8.791 ms  | 1.050× |
+| ratio `bytecode_gc / bytecode`             | 0.9047×   | 0.9031×   | **0.9982×** |
+
+The absolute numbers drifted 5% — ambient V8/system variance. The
+*ratio* is the controlled measurement (both engines built and timed in
+the same session). Δ in the ratio is 0.18% — well inside the project's
+10–25% noise floor noted in ENGINES.md.
+
+### What happened to V8 specialisation
+
+The hypothesis assumed that adding a variable-length sweep loop to
+`gc()` would force V8 to retreat from whatever specialisation it had
+built around the uniform-cell sweep. The measurement says it didn't.
+Three plausible reasons (none verified, all consistent with the data):
+
+1. **The strheap sweep loop never executes during fib(24).**
+   `strheap_top` stays 0; the `while(sp < strheap_top)` condition
+   fails on the first check. V8 may have hoisted the bound and skipped
+   the loop body entirely.
+2. **The `cells[i].car == s_string` branch in `mark()` is cheap.** It's
+   one extra integer compare on each mark hit. V8 likely inlined it
+   and predicted it well — `s_string` is one specific sym; the branch
+   is heavily not-taken during fib (zero string wrappers exist).
+3. **Code size barely moved.** `bytecode_gc.wasm` grew from ~13 KB to
+   ~14 KB. The hot eval loop (the `for(;;) switch(opc)` machine) is
+   unchanged; the new paths sit in `gc()`, in the slow-path `apply_prim`,
+   and in compile() — all called rarely on fib(24).
+
+The framing "V8 will lose specialisation" was too coarse. *Which*
+specialisation? On *what* code? The non-effect tells us V8's
+optimisation strategy here is granular: a single added branch in
+`mark()` doesn't cascade into the hot eval-step code where fib(24)
+spends 99% of its time.
+
+### Compare to H2 attribution
+
+H4 attributed `bytecode_gc`'s lead to "cons-reaches-gc" — V8 has to be
+conservative around inline `cons()` because it might call out to gc().
+The fact that this *did* affect specialisation, while strings *didn't*,
+is informative: V8's concern is about the call-graph reachable from
+the *hot path*, not about the static code size of the *cold path*. gc()
+itself was already a cold path; making it bigger doesn't matter.
+
+If we wanted to actually move the needle here, we'd need to add the
+type-dispatch to a hot-path operation (e.g., make `cons()` check
+whether car is a string wrapper, on every allocation). That would be a
+much more invasive change — and one we have no use for.
+
+### What did and didn't work as predicted
+
+- **String capability: works.** 44/44 programs pass on the gated
+  `parity_strings.mjs` suite, including GC pressure (50k iterations
+  allocating temporary strings each), strings as quoted constants
+  surviving GC, string-append correctness, full arity/type validation.
+- **Cross-engine parity: intact.** 117/117 programs still agree across
+  all 8 engines. Other engines leave string primitives unbound; no
+  program in the unified suite references them.
+- **GC tax: not moved.** The whole point. H6 falsified.
+- **`mark()` branch cost: invisible.** Even on programs that allocate
+  millions of cons cells, the extra `cells[i].car == s_string` check
+  adds no measurable time.
+
+### Updated mechanism model
+
+The plan said falsification in the lower window would "update the
+mechanism model." Update: **V8's specialisation of the bytecode_gc hot
+path is driven by what's reachable from the OP_CALL / cons fast path,
+not by static code size of gc() or apply_prim.** Adding code to cold
+paths is free. Adding type-dispatch to hot paths is what would matter.
+This is consistent with H4's attribution (cons-reaches-gc) but is a
+stronger negative statement than H4 alone supports.
+
+The "non-uniform heap GC tax" framing was wrong on its premises. There
+is no general "GC tax" — there's a specific cons-reaches-gc tax, and a
+specific dispatch-in-the-eval-loop tax, and others. Each one is local
+to its own code path. Bundling them under "GC tax" hides the structure.
+
+### Pending follow-up (not in this PR)
+
+- No variable-length strheap reclamation yet — programs that allocate
+  strings in a hot loop will OOM the strheap before they OOM cells.
+  Adding a freelist or compactor would be ~50 more lines. Out of EXP1's
+  measurement scope; revisit if a real workload needs it.
+- No `string→list` / `list→string` / `substring` / `number→string`.
+  Could be added trivially; not load-bearing for the H6 measurement so
+  deferred. Same gating discipline applies.
