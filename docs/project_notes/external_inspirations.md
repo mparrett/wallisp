@@ -121,6 +121,37 @@ What we are *not* lifting from the talk:
   semantically (continuations as data); duplicating the framing wouldn't
   add a measurement axis we don't have.
 
+## acdw — "A Month with Clojure"
+
+https://www.acdw.net/clojure/
+
+A one-month-with-Clojure impression piece, framed as a Common Lisp /
+Scheme / Clojure three-way:
+
+- **Common Lisp**: incoherent (`mapcar` not `map`; three equalities
+  `eq` / `eql` / `equal`); committee-designed legacy.
+- **Scheme**: beautifully minimal ("fits within 50 pages"), but
+  deliberately excludes pragmatic stuff like hash-maps and error
+  handling from core.
+- **Clojure**: pragmatic middle — `seq` abstraction so `map` works on
+  any collection, single `=`, batteries-included stdlib, JVM ecosystem.
+  Bracket-overloading (`[]`, `{}`, `#{}`) and `~` are listed as the
+  syntactic cost.
+
+**Relevance to wallisp.** The Scheme-pure-vs-Clojure-pragmatic axis is
+exactly the tension between our study repo (small, consistent, eight
+engines doing the *same* small thing — Scheme-pure on purpose) and any
+future `wallisp-core` product story. The codex 2026-06-02 review's
+"Moderately Closable" bucket — first-class vectors/arrays, a real
+standard library, module/load system — is the Clojure-pragmatic move
+in disguise. If `standalone/wallisp.c` ever picks up a real audience,
+this is the question that gets reopened.
+
+Not lifting any specific implementation idea — the article is about the
+*experience* of using a language, not how to build one. Filed as a
+pointer for the "research artifact or product?" decision, not as a
+roadmap input.
+
 ## What we explicitly chose NOT to take
 
 - **mal's 11-step pedagogical structure.** Good for "learn to write a Lisp,"
