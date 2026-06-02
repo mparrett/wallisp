@@ -22,6 +22,9 @@ disasm.wasm
 web/bytecode_gc.wasm
 web/wallisp-standalone.html
 
+# standalone/ extraction build artifact — regenerable via `bash standalone/build.sh`
+standalone/wallisp.wasm
+
 # Disasm + wasm-dispatch snapshots in project_notes/ — regenerable from the
 # tools above; commit only the writeup .md files, not the captured output.
 docs/project_notes/bytecode_disasm.meta.txt
