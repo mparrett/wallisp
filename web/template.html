@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>wallisp — bytecode_gc standalone</title>
+<style>
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+         max-width: 760px; margin: 2em auto; padding: 0 1em; color: #222; }
+  h1 { font-size: 1.1em; margin: 0 0 0.2em; }
+  .sub { color: #777; font-size: 0.9em; margin-bottom: 1.5em; }
+  textarea, pre { width: 100%; box-sizing: border-box;
+                  font: inherit; font-size: 0.95em; }
+  textarea { height: 6em; padding: 0.6em; border: 1px solid #ccc; border-radius: 4px; }
+  .row { display: flex; gap: 0.6em; align-items: center; margin: 0.6em 0; }
+  button { padding: 0.4em 1em; font: inherit; cursor: pointer; }
+  pre { background: #f6f6f6; padding: 0.8em; border-radius: 4px;
+        white-space: pre-wrap; min-height: 3em; margin: 0; }
+  .meta { color: #777; font-size: 0.85em; margin-top: 0.4em; }
+</style>
+</head>
+<body>
+<h1>wallisp — bytecode_gc standalone</h1>
+<div class="sub">A tiny Lisp compiled to freestanding wasm32, embedded inline.</div>
+
+<textarea id="src">(begin
+  (define fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))
+  (fib 20))</textarea>
+
+<div class="row">
+  <button id="run">Eval</button>
+  <span class="meta" id="status">loading…</span>
+</div>
+
+<pre id="out"></pre>
+
+<script>
+const WASM_B64 = "@@WASM_B64@@";
+
+(async () => {
+  const bytes = Uint8Array.from(atob(WASM_B64), c => c.charCodeAt(0));
+  const { instance } = await WebAssembly.instantiate(bytes, {});
+  const ex = instance.exports;
+  const mem = () => new Uint8Array(ex.memory.buffer);
+
+  const status = document.getElementById("status");
+  const out = document.getElementById("out");
+  const src = document.getElementById("src");
+  const run = document.getElementById("run");
+
+  status.textContent = "ready";
+
+  function evalSource(text) {
+    const bytes = new TextEncoder().encode(text);
+    mem().set(bytes, ex.input_ptr());
+    const n = ex.eval_source(bytes.length);
+    return new TextDecoder().decode(mem().subarray(ex.output_ptr(), ex.output_ptr() + n));
+  }
+
+  run.addEventListener("click", () => {
+    try {
+      const t0 = performance.now();
+      const result = evalSource(src.value);
+      const dt = (performance.now() - t0).toFixed(1);
+      const gc = ex.gc_count ? ex.gc_count() : null;
+      out.textContent = result;
+      status.textContent = `${dt} ms` + (gc !== null ? ` · ${gc} gc cycles` : "");
+    } catch (e) {
+      out.textContent = String(e);
+      status.textContent = "error";
+    }
+  });
+})();
+</script>
+</body>
+</html>

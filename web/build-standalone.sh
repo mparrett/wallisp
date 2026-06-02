@@ -1,29 +1,32 @@
 #!/usr/bin/env bash
-# build.sh — compile the Lisp VM and emit a single self-contained HTML file.
+# build-standalone.sh — compile the finalist VM (engines/bytecode_gc.c) and
+# emit a single self-contained HTML file with the wasm embedded as base64.
 #
-#   ./build.sh            # builds lisp.wasm + lisp-standalone.html
-#   ./build.sh --no-html  # just the .wasm
+#   ./build-standalone.sh            # builds bytecode_gc.wasm + wallisp-standalone.html
+#   ./build-standalone.sh --no-html  # just the .wasm
 #
 # Requires: clang with the wasm32 target + wasm-ld (LLVM 12+), and python3
-# for the inject step (sed/awk choke on 16KB of base64 with regex specials).
+# for the inject step (sed/awk choke on base64 with regex specials).
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
-SRC=lisp.c
-WASM=lisp.wasm
+SRC=../engines/bytecode_gc.c
+WASM=bytecode_gc.wasm
 TEMPLATE=template.html
-OUT=lisp-standalone.html
-ARENA_MEM=33554432   # initial linear memory (bytes); arena size lives in lisp.c (MAX_CELLS)
+OUT=wallisp-standalone.html
+ARENA_MEM=33554432   # initial linear memory (bytes); cell-arena size lives in the C source
 
 # --- preflight -------------------------------------------------------------
 command -v clang   >/dev/null || { echo "error: clang not found" >&2; exit 1; }
 clang --print-targets 2>/dev/null | grep -q wasm32 \
   || { echo "error: this clang has no wasm32 target" >&2; exit 1; }
+[ -f "$SRC" ] || { echo "error: $SRC not found" >&2; exit 1; }
 
 # --- compile ---------------------------------------------------------------
+# bytecode_gc.c needs -fno-builtin (defines its own memset/memcpy).
 echo "→ compiling $SRC → $WASM"
-clang --target=wasm32 -nostdlib -Oz \
+clang --target=wasm32 -nostdlib -fno-builtin -Oz \
   -Wl,--no-entry -Wl,--export-dynamic -Wl,--allow-undefined \
   -Wl,--initial-memory=$ARENA_MEM \
   -o "$WASM" "$SRC"
@@ -32,11 +35,12 @@ echo "  $(wc -c < "$WASM") bytes"
 [ "${1:-}" = "--no-html" ] && { echo "done (wasm only)."; exit 0; }
 
 # --- inject into the single-file template ----------------------------------
+[ -f "$TEMPLATE" ] || { echo "error: $TEMPLATE not found" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "error: python3 needed for inject" >&2; exit 1; }
 command -v base64  >/dev/null || { echo "error: base64 needed" >&2; exit 1; }
 
 echo "→ embedding $WASM into $OUT"
-B64=$(base64 -w0 "$WASM" 2>/dev/null || base64 "$WASM" | tr -d '\n')  # -w0 is GNU; BSD fallback
+B64=$(base64 -w0 "$WASM" 2>/dev/null || base64 -i "$WASM" | tr -d '\n')  # -w0 is GNU; -i is BSD/macOS
 WASM_B64="$B64" python3 - "$TEMPLATE" "$OUT" <<'PY'
 import os, sys
 template, out = sys.argv[1], sys.argv[2]

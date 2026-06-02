@@ -27,16 +27,17 @@ standalone equivalents live in `baselines/bench.{js,c}`.
 ## What this is, and what it isn't
 
 This is a **measurement study**, not a Lisp you should embed in a product.
-The engines deliberately mirror tinylisp/mal's minimal-validation style —
-that's part of how each engine stays in ~370–530 lines, which is what makes
-A/B comparisons honest. Concretely, the engines still do **not** validate:
-primitive arity (`(+ 1)` returns `1`), argument types (`(+ 'a 1)` silently
-degrades), or many malformed programs (often a bare `<error>` or empty
-output). User-lambda arity *is* checked (`((lambda (x) x) 1 2)` is an
-error). All eight engines agree on this behaviour — enforced by
-`harness/parity.mjs` — so the comparisons remain apples-to-apples; just
-don't mistake "agrees across engines" for "is a robust Scheme
-implementation."
+Engines run ~370–530 lines (with `bytecode_gc` at ~850 lines as the
+finalist+experiment host), which is what makes A/B comparisons honest.
+PR1 added primitive arity/type validation, `/` and `mod`, and arithmetic
+overflow detection across all eight engines, so the shared semantic floor
+is real — `(+ 1)`, `(+ 'a 1)`, and `((lambda (x) x) 1 2)` all return
+`<error>` rather than silently degrading. `bytecode_gc` carries extensions
+(strings, `set-car!`/`set-cdr!` mutation) the other engines don't; the
+parity harness gates those programs accordingly. Some malformed programs
+still surface as bare `<error>`. The comparisons remain apples-to-apples
+on the shared core; don't mistake "agrees across engines" for "is a robust
+Scheme implementation."
 
 ## Learn more
 

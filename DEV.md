@@ -17,13 +17,18 @@ For build/run, see [README.md](README.md). For the empirical record, see
 - **Special forms:** `quote if define lambda let begin cond`. `define` also
   accepts the function shorthand `(define (f a b) body)`; `cond` recognises
   `else` as the catch-all clause head.
-- **Primitives:** `cons car cdr + - * = < null? pair? list?`.
-  **No strings, no division, no floats** — smallness is the point; it let us
-  build the *same* semantics three ways and compare architectures honestly.
-- **Arity** on user lambdas is checked at call time — wrong-arity calls
-  return `<error>` rather than silently NIL-padding or dropping. Primitives
-  are still unchecked (`(+ 1)` returns `1`), matching the tinylisp/mal
-  minimal-validation style on the prim side.
+- **Primitives (shared core):** `cons car cdr + - * / mod = < null? pair? list?`.
+  Fixnum-only — no floats. Division-by-zero and arithmetic overflow are
+  errors. PR1 brought this to all eight engines so the shared semantic
+  floor is real, not "tinylisp/mal minimal-validation".
+- **`bytecode_gc` extensions:** strings (`string?` `string-length` `string-ref`
+  `string=?` `string-append`) and mutation (`set-car!` `set-cdr!`). Other
+  engines leave these unbound; `harness/parity.mjs` gates the relevant
+  programs to engines that support them.
+- **Arity and types** are validated on both primitives and user lambdas.
+  `(+ 1)`, `(+ 'a 1)`, and `((lambda (x) x) 1 2)` all return `<error>`.
+  Some malformed programs still surface as bare `<error>` rather than a
+  differentiated message.
 - **Reader:** recursive descent, `'` quote shorthand, tolerant of a missing `)`.
 
 ## The engines — `engines/`
