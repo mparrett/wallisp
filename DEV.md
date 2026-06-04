@@ -17,10 +17,12 @@ For build/run, see [README.md](README.md). For the empirical record, see
 - **Special forms:** `quote if define lambda let begin cond`. `define` also
   accepts the function shorthand `(define (f a b) body)`; `cond` recognises
   `else` as the catch-all clause head.
-- **Primitives (shared core):** `cons car cdr + - * / mod = < null? pair? list?`.
-  Fixnum-only — no floats. Division-by-zero and arithmetic overflow are
-  errors. PR1 brought this to all eight engines so the shared semantic
-  floor is real, not "tinylisp/mal minimal-validation".
+- **Primitives (shared core):** `cons car cdr + - * / mod = < null? pair?
+  list? number? symbol?`. Fixnum-only — no floats. Division-by-zero and
+  arithmetic overflow are errors. PR1 brought this to all eight engines
+  so the shared semantic floor is real, not "tinylisp/mal minimal-
+  validation". (`number?` / `symbol?` shipped 2026-06-03 to unblock the
+  metacircular eval.)
 - **`bytecode_gc` extensions:** strings (`string?` `string-length` `string-ref`
   `string=?` `string-append`) and mutation (`set-car!` `set-cdr!`). Other
   engines leave these unbound; `harness/parity.mjs` gates the relevant

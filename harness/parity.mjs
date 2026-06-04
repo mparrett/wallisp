@@ -166,6 +166,19 @@ const PROGRAMS = [
   '(begin (define n 0) (define inc (lambda () (begin (set! n (+ n 1)) n))) (inc) (inc) (inc) n)',
   '(begin (define c (cons 1 2)) (set-car! c 9))',    // set-car! returns new value
   '(begin (define x 1) (set! x 42))',                 // set! returns new value
+
+  // ── number? / symbol? predicates (post-Tier-B; metacircular-eval prep) ──
+  '(number? 42)', '(number? -1)', '(number? 0)',
+  '(number? nil)', '(number? t)', "(number? 'a)",
+  "(number? '(1 2 3))",
+  '(number?)', '(number? 1 2)',                       // arity errors
+  "(symbol? 'a)", "(symbol? 'foo)",
+  '(symbol? nil)', '(symbol? t)',
+  '(symbol? 5)', "(symbol? '(a b))",
+  '(symbol?)', "(symbol? 'a 'b)",                     // arity errors
+  // composes with other predicates — used by the upcoming metacircular eval
+  "(if (number? 5) 'num 'sym)",
+  "(if (symbol? 'x) 'sym 'num)",
 ];
 
 async function load(file) {

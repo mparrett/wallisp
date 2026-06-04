@@ -17,7 +17,7 @@ Bug fixes that matter for both should be ported deliberately, not assumed.
 
 ```bash
 bash build.sh           # → wallisp.wasm
-bash build.sh --check   # build + run test.mjs (68 tests: 46 core + 22 prelude)
+bash build.sh --check   # build + run test.mjs (80 tests: 46 core + 12 predicates + 22 prelude)
 ```
 
 Requires clang with the `wasm32` target and `wasm-ld` (LLVM 12+). On
@@ -52,9 +52,10 @@ The prelude adds `not`, `>` / `>=` / `<=`, `length`, `reverse`, `fold`,
 - **Special forms:** `quote if define set! lambda let begin cond`. `define`
   accepts the function shorthand `(define (f a b) body)`; `cond` recognises
   `else`.
-- **Primitives:** `cons car cdr + - * / mod = < null? pair? list?
-  set-car! set-cdr!`. Fixnum-only (no floats, no strings). Division-by-zero,
-  arithmetic overflow, wrong arity, and wrong types all return `<error>`.
+- **Primitives:** `cons car cdr + - * / mod = < null? pair? list? number?
+  symbol? set-car! set-cdr!`. Fixnum-only (no floats, no strings).
+  Division-by-zero, arithmetic overflow, wrong arity, and wrong types all
+  return `<error>`.
 - **Reader:** recursive descent, `'` quote shorthand, `;` line comments.
 - **TCO:** tail-position calls reuse the call frame, so a tail loop runs in
   constant call-stack space.

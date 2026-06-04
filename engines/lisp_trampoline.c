@@ -64,7 +64,7 @@ void* memcpy(void* d, const void* s, unsigned long n){ u8* a=(u8*)d; const u8* b
 enum {
   SP_NIL=0, SP_T, SP_ERR, SP_UNBOUND,
   PR_CONS, PR_CAR, PR_CDR, PR_ADD, PR_SUB, PR_MUL, PR_DIV, PR_MOD, PR_EQ, PR_LT,
-  PR_NULLP, PR_PAIRP, PR_LISTQ, PR_SETCAR, PR_SETCDR,
+  PR_NULLP, PR_PAIRP, PR_LISTQ, PR_NUMBERP, PR_SYMBOLP, PR_SETCAR, PR_SETCDR,
   SP_COUNT
 };
 #define NIL      mkspec(SP_NIL)
@@ -229,6 +229,8 @@ static u32 apply_prim(u32 prim, u32 args){
     case PR_NULLP: if(!is_nil(d0)) return ERR; return is_nil(a)?TRUE:NIL;
     case PR_PAIRP: if(!is_nil(d0)) return ERR; return is_cons(a)?TRUE:NIL;
     case PR_LISTQ: if(!is_nil(d0)) return ERR; return (is_nil(a)||is_cons(a))?TRUE:NIL;
+    case PR_NUMBERP: if(!is_nil(d0)) return ERR; return is_fix(a)?TRUE:NIL;
+    case PR_SYMBOLP: if(!is_nil(d0)) return ERR; return is_sym(a)?TRUE:NIL;
     case PR_CAR:   if(!is_nil(d0) || !is_cons(a)) return ERR; return cells[considx(a)].car;
     case PR_CDR:   if(!is_nil(d0) || !is_cons(a)) return ERR; return cells[considx(a)].cdr;
   }
@@ -436,6 +438,7 @@ static void init(){
   bindp("=",mkspec(PR_EQ));      bindp("<",mkspec(PR_LT));
   bindp("null?",mkspec(PR_NULLP));bindp("pair?",mkspec(PR_PAIRP));
   bindp("list?",mkspec(PR_LISTQ));
+  bindp("number?",mkspec(PR_NUMBERP)); bindp("symbol?",mkspec(PR_SYMBOLP));
   bindp("set-car!",mkspec(PR_SETCAR)); bindp("set-cdr!",mkspec(PR_SETCDR));
 }
 

@@ -96,6 +96,20 @@ const tests = [
   // TCO: a non-trivial tail loop completes in a small arena without blowing
   // the call stack or the cell arena.
   ["(begin (define (loop n) (if (= n 0) 'done (loop (- n 1)))) (loop 100000))", "done"],
+
+  // Type predicates — needed for the upcoming metacircular evaluator
+  ["(number? 42)", "t"],
+  ["(number? -1)", "t"],
+  ["(number? 'a)", "()"],
+  ["(number? nil)", "()"],
+  ["(number? '(1 2))", "()"],
+  ["(symbol? 'a)", "t"],
+  ["(symbol? 'foo)", "t"],
+  ["(symbol? 5)", "()"],
+  ["(symbol? nil)", "()"],
+  ["(symbol? '(a b))", "()"],
+  ["(number?)", "<error>"],
+  ["(symbol? 'a 'b)", "<error>"],
 ];
 
 // ---- prelude tests --------------------------------------------------------
