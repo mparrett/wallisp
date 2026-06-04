@@ -17,7 +17,7 @@ Bug fixes that matter for both should be ported deliberately, not assumed.
 
 ```bash
 bash build.sh           # → wallisp.wasm
-bash build.sh --check   # build + run test.mjs
+bash build.sh --check   # build + run test.mjs (68 tests: 46 core + 22 prelude)
 ```
 
 Requires clang with the `wasm32` target and `wasm-ld` (LLVM 12+). On
@@ -34,6 +34,15 @@ node cli.mjs program.lisp
 node cli.mjs -e "(+ 1 2)"
 echo "(* 6 7)" | node cli.mjs
 ```
+
+To use the prelude (see `prelude.lisp`), concat it with your program:
+
+```bash
+cat prelude.lisp program.lisp | node cli.mjs
+```
+
+The prelude adds `not`, `>` / `>=` / `<=`, `length`, `reverse`, `fold`,
+`append`, `map`, `filter`, and `assoc` on top of the core primitives.
 
 ## Language
 

@@ -98,9 +98,56 @@ const tests = [
   ["(begin (define (loop n) (if (= n 0) 'done (loop (- n 1)))) (loop 100000))", "done"],
 ];
 
+// ---- prelude tests --------------------------------------------------------
+// Concat prelude.lisp with each test source so the program-under-test sees
+// the prelude's defines as globals. Mirrors the `cat prelude.lisp program |
+// node cli.mjs` usage.
+const PRELUDE = fs.readFileSync(join(HERE, 'prelude.lisp'), 'utf8');
+const preludeTests = [
+  // logic + comparators
+  ["(not t)", "()"],
+  ["(not ())", "t"],
+  ["(not 0)", "()"],                   // 0 is truthy; only nil is false
+  ["(> 5 3)", "t"],
+  ["(> 3 5)", "()"],
+  ["(>= 5 5)", "t"],
+  ["(>= 4 5)", "()"],
+  ["(<= 5 5)", "t"],
+  ["(<= 6 5)", "()"],
+
+  // length / reverse / fold (tail-recursive)
+  ["(length ())", "0"],
+  ["(length '(a b c d e))", "5"],
+  ["(reverse ())", "()"],
+  ["(reverse '(1 2 3))", "(3 2 1)"],
+  ["(fold + 0 '(1 2 3 4 5))", "15"],
+  ["(fold (lambda (a x) (cons x a)) () '(1 2 3))", "(3 2 1)"],
+
+  // list builders
+  ["(append () '(a b))", "(a b)"],
+  ["(append '(1 2) '(3 4))", "(1 2 3 4)"],
+  ["(map (lambda (x) (* x x)) '(1 2 3 4))", "(1 4 9 16)"],
+  ["(filter (lambda (x) (< x 3)) '(1 2 3 4 5))", "(1 2)"],
+
+  // assoc
+  ["(assoc 'b '((a . 1) (b . 2) (c . 3)))", "(b . 2)"],
+  ["(assoc 'z '((a . 1) (b . 2)))", "()"],
+
+  // tail-recursion on big lists (would blow the call stack non-tail)
+  ["(length (fold (lambda (a _) (cons _ a)) () '(0 0 0 0 0 0 0 0 0 0)))", "10"],
+];
+
 let pass = 0, fail = 0;
 for (const [src, want] of tests) {
   const got = run(src);
+  const ok = got === want;
+  if (ok) pass++; else fail++;
+  const label = JSON.stringify(src).slice(0, 60).padEnd(62);
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label} => ${JSON.stringify(got)}${ok ? '' : '   expected ' + JSON.stringify(want)}`);
+}
+console.log(`\n--- prelude (concat'd) ---`);
+for (const [src, want] of preludeTests) {
+  const got = run(PRELUDE + '\n' + src);
   const ok = got === want;
   if (ok) pass++; else fail++;
   const label = JSON.stringify(src).slice(0, 60).padEnd(62);
