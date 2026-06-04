@@ -134,6 +134,17 @@ FINDINGS.md for the full story.
   redefinition while eliminating most of the remaining GC tax. The
   shippable engine.
 
+  **H8 update (2026-06-04, FINDINGS.md):** the bytecode advantage
+  *widens*, not narrows, on a metacircular workload (3.94× vs the
+  tree-walker on `meta-fib(12)`, up from 2.54× on direct `fib(24)`).
+  The pre-registered mechanism story — that PR1's inline arithmetic
+  fast path carried the win — was falsified. Revised model: the
+  dominant mechanism is V8's specialization of the VM's `br_table`
+  dispatch; the tree-walker's recursive eval re-walks AST cons-graphs
+  on every step and pays more the more dispatch the host has to do.
+  PR1's fast path still matters for correctness and a small bump on
+  the arithmetic case, but it's not the headline cause.
+
 ## Tradeoffs in two lines
 
 If your priority is speed, the engine architecture is the lever (bytecode

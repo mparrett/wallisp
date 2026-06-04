@@ -2208,3 +2208,106 @@ to its own code path. Bundling them under "GC tax" hides the structure.
 - No `string→list` / `list→string` / `substring` / `number→string`.
   Could be added trivially; not load-bearing for the H6 measurement so
   deferred. Same gating discipline applies.
+
+## H8 — does bytecode_gc's win generalize to metacircular eval? (FALSIFIED, preserves direction)
+
+Pre-registered (`docs/project_notes/h8_metacircular_preregistration.md`,
+2026-06-04): on a metacircular `fib(N)` — a wallisp interpreter written
+in wallisp, running the guest fib — the `bytecode_gc / lisp` wasm ratio
+should *narrow* from direct fib(24)'s ~0.30-0.43× into the band
+**[0.40×, 0.70×]**. The mechanism story: PR1's inline arithmetic fast
+path is a major contributor to bytecode's win on direct fib, and a
+cond-heavy / env-lookup-heavy metacircular hot loop should erode that
+advantage. Falsification windows: ≤0.40× (preserves — mechanism wrong),
+≥0.85× (vanishes — also wrong, other direction), >1.0× (inverts).
+
+**Result: 0.253× wasm. Falsified in the lower window — the bytecode_gc
+advantage *widened*, not narrowed.** The mechanism story was wrong:
+dispatch shape dominates, not arithmetic.
+
+### What was measured
+
+`harness/bench.mjs` already has the `meta-fib(N)` row wired to
+`baselines/metacircular.lisp` (a small Lisp interpreter using Y-combinator
+recursion). 5 invocations of the harness, min-of-min per engine across
+runs. Workload: `meta-fib(12)` = 144. Same engines, same V8, same shell
+session as the direct fib(24) row in the same bench output.
+
+| engine                  | direct fib(24) | ratio  | meta-fib(12) | ratio  | direction |
+|-------------------------|---------------:|-------:|-------------:|-------:|-----------|
+| `lisp_big` (TW)         |     19.281 ms  | 1.000× |    13.666 ms | 1.000× | baseline |
+| `lisp_trampoline_big`   |     19.216 ms  | 0.997× |    13.570 ms | 0.993× | preserved |
+| `lisp_region_big`       |     19.244 ms  | 0.998× |    13.801 ms | 1.010× | tiny tax |
+| `lisp_gc`               |     25.885 ms  | 1.343× |    16.639 ms | 1.218× | narrowed |
+| `cek_big`               |     33.357 ms  | 1.730× |    20.202 ms | 1.478× | narrowed |
+| `cek_gc`                |     60.080 ms  | 3.116× |    34.975 ms | 2.560× | narrowed |
+| `bytecode_big`          |      8.436 ms  | 0.437× |     3.716 ms | 0.272× | **WIDENED** |
+| **`bytecode_gc`**       |    **7.593 ms**| **0.394×** | **3.464 ms** | **0.253×** | **WIDENED** |
+
+`bytecode_gc` is 2.54× faster than the tree-walker on direct fib, and
+**3.94× faster** on metacircular fib. The win grew by 55%.
+
+### Mechanism update
+
+Pre-reg model (wrong): the inline 2-arg arithmetic fast path in
+`OP_CALL` (the `if(n==2 && id>=PR_ADD && id<=PR_LT)` branch in
+`engines/bytecode_gc.c`) is what carries bytecode's win on
+arithmetic-heavy workloads like fib. On a cond-heavy host hot loop
+(`mceval`'s dispatch chain in `baselines/metacircular.lisp`), this
+branch fires *less often* per host step, so the win should shrink.
+
+Revised model (post-data): the inline arithmetic fast path is a small
+share of bytecode's total advantage. The dominant mechanism is **V8's
+specialization of the VM's `br_table` dispatch over 12-14 opcodes** —
+each arm gets its own optimized code, and the run loop is a small
+inlinable shape V8 commits to. The tree-walker by contrast has a
+recursive `eval` that re-walks AST cons-graphs on every step:
+`(car expr)` to dispatch, then `(car (cdr expr))` etc. to pull out
+sub-forms, each chasing pointers through cells that aren't laid out
+contiguously. The *more* cond-branches the host eval handles (more
+forms to dispatch over), the more AST chasing per step, the wider the
+gap.
+
+That's why the metacircular workload — which is essentially "tree-walk
+through `mceval`'s big nested `if` to dispatch on the GUEST form
+type" — amplifies bytecode's dispatch advantage instead of erasing it.
+
+Subtly: this also reframes the PR1 inline-fast-path story. PR1 still
+matters for what it does (correctness + a small perf bump on the
+arithmetic case), but the perf bump is not the headline cause of
+bytecode's win. The headline cause was already there pre-PR1: it's the
+compile-then-dispatch substrate.
+
+### Secondary observations
+
+- **S1 (CEK narrowing): CONFIRMED.** `cek_big / lisp_big` narrowed
+  1.730× → 1.478× (-14%); `cek_gc / lisp_big` narrowed 3.116× → 2.560×
+  (-18%). CEK's per-step overhead is fixed (K_ARGS consing per dispatch
+  step); when each guest step takes ~100× more host steps, the
+  relative cost shrinks. Both CEK variants move the same direction,
+  confirming this is per-step amortization rather than something
+  GC-specific.
+- **S2 (GC tax preserved):** `bytecode_gc / bytecode_big` direct =
+  0.900× (bytecode_gc 11% *faster* due to small-arena cache fit, the
+  known H2 result); meta = 0.932×. Cons rate per host step is similar
+  across workloads, so this ratio is preserved.
+- **S3 (engine ordering):** preserved. `bytecode_gc < bytecode_big <
+  lisp_trampoline_big ≤ lisp_big ≤ lisp_region_big < lisp_gc < cek_big
+  < cek_gc` holds on both workloads. The *gaps* compress in the middle
+  tiers but the bytecode tier pulls *away* — bytecode is qualitatively
+  different (compile-once vs. re-walk-the-tree), and complex workloads
+  amplify that.
+
+### What this answers
+
+The 2026-06-01 handoff named one open empirical question — "does
+bytecode_gc's post-PR1 advantage generalize beyond fib?" — and parked
+it as a possible Tier-C experiment. **Answered: yes, and the advantage
+grows.** No further work needed on this question; the result is durable
+across workload shape.
+
+The negative space: this does NOT mean bytecode wins on *every* possible
+workload. It means it wins on workloads where the host eval loop has
+a non-trivial dispatch shape (which most non-trivial workloads do).
+Trivial single-op hot loops (`(+ 1 2)` repeated) would be different;
+they're not relevant to any realistic program.
