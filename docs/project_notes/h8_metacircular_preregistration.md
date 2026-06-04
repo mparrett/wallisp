@@ -2,12 +2,10 @@
 
 **Pre-registered 2026-06-04. Measured 2026-06-04. P1 FALSIFIED — see "Outcome" below.**
 
-> Note for future readers: the metacircular evaluator the bench actually
-> ran is `baselines/metacircular.lisp` (already in the repo; uses
-> Y-combinator), not the `harness/mc_eval.lisp` I wrote this session
-> (uses pass-by-self). The H8 prediction is about workload *shape*, so
-> either evaluator should produce the same finding; the bench uses the
-> one wired into `harness/bench.mjs`.
+> Note for future readers: the bench uses `baselines/metacircular.lisp`
+> (Y-combinator recursion, already wired into `harness/bench.mjs`).
+> H8's prediction is about workload *shape* — the choice of evaluator
+> implementation doesn't change the finding direction.
 
 The handoff `HANDOFF_2026-06-01_tier-b-exps-falsified` left this question
 open: *does `bytecode_gc`'s post-PR1 advantage over `bytecode` (and over the
