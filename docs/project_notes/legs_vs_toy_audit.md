@@ -1,5 +1,12 @@
 # Legs vs toy — audit (2026-05-31)
 
+> **Snapshot as of 2026-05-31.** Several gaps named here have since shipped:
+> primitive validation (PR1, all 8 engines), strings (EXP1, `bytecode_gc`
+> only), `call/cc` (EXP2, CEK engines). For current language surface and
+> findings, see `FINDINGS.md`, `ENGINES.md`, and `docs/index.html` §9.
+> The audit is preserved as a historical reference point, not as a
+> live status doc.
+
 Honest read of where wallisp is research-grade and where it's a teaching toy,
 with cost/benefit on each gap. Pairs with `gap_closure_plan.md` for action.
 

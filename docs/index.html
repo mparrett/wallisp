@@ -297,7 +297,7 @@ footer a { color: var(--ink-soft); border-bottom-color: var(--border); }
 
 <p>The project isn't a Lisp tutorial. It's a study in how interpreter design choices interact with their compilation substrate, told through eight implementations of the same evaluator. A tiny Lisp is the smallest complete lab for programming-language implementation; this one treats the lab like science instead of nostalgia.</p>
 
-<p>All eight engines export the same wasm ABI and agree byte-for-byte on a 55-program parity suite (<code>harness/parity.mjs</code>) &mdash; that's what keeps the A/B comparisons honest. They are deliberately minimal in the tinylisp/mal style: no primitive-arity checking, no type validation, no exhaustive error reporting (user-lambda arity <em>is</em> checked). That keeps each engine in ~370&ndash;530 lines and the comparisons apples-to-apples; it also means this isn't a Lisp you'd embed in a product.</p>
+<p>All eight engines export the same wasm ABI and agree byte-for-byte on a 136-program parity suite (<code>harness/parity.mjs</code>) &mdash; that's what keeps the A/B comparisons honest. Each engine validates primitive arity, types, division-by-zero, and arithmetic overflow (<code>(+ 1)</code>, <code>(+ 'a 1)</code>, and <code>(/ 1 0)</code> all return <code>&lt;error&gt;</code>); user-lambda arity is checked too. <code>bytecode_gc</code> carries extensions the others don't (strings, mutation); the parity harness gates those programs accordingly. Each engine still fits in ~370&ndash;850 lines &mdash; small enough for the A/B comparisons to stay apples-to-apples &mdash; but the language is no longer "minimal-validation tinylisp/mal style".</p>
 
 <details>
 <summary><h2><span class="section-num">1</span>What was built</h2></summary>
@@ -878,7 +878,7 @@ static void gc(void) {
   <li><strong>H4:</strong> GC widens bytecode's speed lead. <em>Partially confirmed; mechanism refuted.</em> The widening is real (4 of 5 wasm benchmarks) but driven by H2's per-callsite barrier amplified by engine shape, not by collection frequency. Three GC engines together show V8's amplification scales with each engine's JIT-specializability: <code>bytecode_gc</code> ~1.0&times;, <code>lisp_gc</code> ~1.1&times;, <code>cek_gc</code> ~1.4&times;.</li>
 </ul>
 
-<p>Three deferred ideas remain in <code>docs/project_incoming/</code> &mdash; two of them filed during the tinylisp/mal external reading. The full record (predictions, measurements, falsification logs, reframings) lives in <code>FINDINGS.md</code>. Architecture and ISA in <code>DEV.md</code>. Engine comparison matrix in <code>ENGINES.md</code>. All in the repo root.</p>
+<p>A handful of deferred ideas sit in <code>docs/project_incoming/</code>. The full record (predictions, measurements, falsification logs, reframings) lives in <code>FINDINGS.md</code> &mdash; eight hypothesis arcs tracked there as of writing, including H6 (string-heap GC tax, falsified), H7 (CEK + <code>call/cc</code> as a speed story, falsified), and H8 (bytecode's lead on metacircular, formally pre-registered against the &sect;9 finding above and re-confirmed at 3.94&times; faster). Architecture and ISA in <code>DEV.md</code>. Engine comparison matrix in <code>ENGINES.md</code>. Clean extraction of the finalist VM in <code>standalone/</code>. All in the repo root.</p>
 </details>
 
 </div>

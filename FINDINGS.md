@@ -2225,6 +2225,17 @@ advantage. Falsification windows: ≤0.40× (preserves — mechanism wrong),
 advantage *widened*, not narrowed.** The mechanism story was wrong:
 dispatch shape dominates, not arithmetic.
 
+> Context-honest disclosure: `docs/index.html` §9 had already published
+> the qualitative finding ("Bytecode's lead WIDENS under metacircular
+> workload") in commit `9df1910` (added 2026-05-29) before the H8
+> pre-registration was written on 2026-06-04. H8 re-derives the
+> finding via the formal pre-registration → falsification discipline
+> (with explicit windows, the falsified mechanism story, and the
+> revised model below). Both records are kept: the §9 essay for
+> narrative readers, this H8 entry as the structured falsification
+> log. They agree on direction (widens) and are close on magnitude
+> (§9 quotes ~3.6×; H8 measures 3.94×).
+
 ### What was measured
 
 `harness/bench.mjs` already has the `meta-fib(N)` row wired to

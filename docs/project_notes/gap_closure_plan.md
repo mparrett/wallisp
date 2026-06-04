@@ -1,5 +1,18 @@
 # Gap-closure plan (2026-05-31)
 
+> **Snapshot of the plan as proposed.** Status as of 2026-06-04:
+> - **PR1** (prim validation + div/mod + overflow) — shipped across all 8 engines.
+>   See `FINDINGS.md` "PR1a/b/c" sections.
+> - **PR2** (`set!` / `set-car!` / `set-cdr!`) — shipped across all 8 engines.
+> - **PR3** (32-bit fixnums) — DEFERRED. No real program has tripped overflow.
+> - **EXP1** (strings in `bytecode_gc`) — shipped; H6 falsified, see `FINDINGS.md`.
+> - **EXP2** (`call/cc` in CEK) — shipped; H7 falsified, see `FINDINGS.md`.
+>
+> The plan acts as the historical record of what was proposed. Measurement
+> outcomes live in `FINDINGS.md` (H6, H7, plus the later H8 on metacircular
+> generalization). This document is preserved for the proposal/prediction
+> trail; it is not a live tracker.
+
 Acts on `legs_vs_toy_audit.md`. Ordered by leverage; each item shaped as a
 landable PR with a pre-registered prediction so we don't drift from the
 project's measure-don't-guess discipline.
