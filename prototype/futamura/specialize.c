@@ -169,6 +169,14 @@ static SVal sv_fail(void){ SVal v = {SV_FAIL,0,0}; return v; }
 static SVal sv_fix(i32 x){ SVal v = {SV_FIX,x,0}; return v; }
 static SVal sv_lam(int i){ SVal v = {SV_LAMBDA,0,i}; return v; }
 
+// Top-level comptime values: `(define NAME EXPR)` where EXPR isn't a
+// `(lambda ...)` form. The RHS is evaluated at spec time and the resulting
+// SVal (typically SV_LAMBDA) is stored here, looked up later by symbol.
+typedef struct { const char *name; SVal v; } CompDef;
+#define COMPDEFS_MAX 64
+static CompDef comp_defs[COMPDEFS_MAX];
+static int n_comp_defs = 0;
+
 // Fuel: bound inlining work per spec-time evaluation. Prevents recursive
 // functions like fib from inlining unboundedly when called with a comptime arg.
 #define EVAL_CT_FUEL 10000
@@ -244,19 +252,30 @@ static int sym_eq(u32 v, const char *s){
 // Forward decl — used by eval_ct.
 static void emit_expr(FILE *out, u32 node);
 
-// Look up a top-level define by symbol. fns[].name is the mangled C name; the
-// Lisp symbol may contain `-`/`?`/`!` so we mangle on the fly while comparing.
+// Compare a Lisp symbol (with on-the-fly mangling) to an already-mangled
+// C name. Used by both find_define and find_comp_def.
+static int sym_matches_mangled(u32 sym, const char *mangled){
+  u32 i = symidx(sym);
+  if(strlen(mangled) != symlen[i]) return 0;
+  for(u32 j = 0; j < symlen[i]; j++){
+    if(c_mangle_char(symname[i][j]) != mangled[j]) return 0;
+  }
+  return 1;
+}
+
+// Look up a top-level define by symbol.
 static Fn* find_define(u32 sym){
   if(!is_sym(sym)) return NULL;
-  u32 i = symidx(sym);
-  for(int k = 0; k < nfns; k++){
-    if(strlen(fns[k].name) != symlen[i]) continue;
-    int match = 1;
-    for(u32 j = 0; j < symlen[i]; j++){
-      if(c_mangle_char(symname[i][j]) != fns[k].name[j]){ match = 0; break; }
-    }
-    if(match) return &fns[k];
-  }
+  for(int k = 0; k < nfns; k++)
+    if(sym_matches_mangled(sym, fns[k].name)) return &fns[k];
+  return NULL;
+}
+
+// Look up a top-level comptime value (`(define NAME EXPR)`) by symbol.
+static CompDef* find_comp_def(u32 sym){
+  if(!is_sym(sym)) return NULL;
+  for(int k = 0; k < n_comp_defs; k++)
+    if(sym_matches_mangled(sym, comp_defs[k].name)) return &comp_defs[k];
   return NULL;
 }
 
@@ -276,6 +295,8 @@ static SVal eval_ct(u32 node){
       if(b.k == BV_LAMBDA) return sv_lam(b.lam_idx);
       return sv_fail();  // BV_RUNTIME — not comptime
     }
+    CompDef *cd = find_comp_def(node);
+    if(cd) return cd->v;
     return sv_fail();    // unbound — usually a function parameter (runtime)
   }
 
@@ -466,12 +487,21 @@ static void emit_expr(FILE *out, u32 node){
   if(is_sym(node)){
     // Check the spec-time env first. BV_FIX → substitute literal. BV_LAMBDA
     // → error (closures can't appear as runtime values). BV_RUNTIME or
-    // unbound → emit the name (a C local or function parameter).
+    // unbound → emit the name (a C local or function parameter), or substitute
+    // a top-level comptime value if one is registered.
     Binding b;
     if(env_lookup(node, &b)){
       if(b.k == BV_FIX){ fprintf(out, "mkfix(%d)", b.fix); return; }
       if(b.k == BV_LAMBDA){
         fprintf(stderr, "specialize: closure `%s` escaped to a runtime value position\n", symstr(node));
+        exit(1);
+      }
+    }
+    CompDef *cd = find_comp_def(node);
+    if(cd){
+      if(cd->v.k == SV_FIX){ fprintf(out, "mkfix(%d)", cd->v.fix); return; }
+      if(cd->v.k == SV_LAMBDA){
+        fprintf(stderr, "specialize: closure-valued top-level `%s` escaped to a runtime value position\n", symstr(node));
         exit(1);
       }
     }
@@ -536,11 +566,17 @@ static void emit_expr(FILE *out, u32 node){
   }
 
   // Symbol head: either a closure bound via let/param (BV_LAMBDA →
-  // beta-reduce at emit time), a named top-level function, or unknown.
+  // beta-reduce at emit time), a top-level comptime closure value, a named
+  // top-level function, or unknown.
   if(is_sym(head)){
     Binding b;
     if(env_lookup(head, &b) && b.k == BV_LAMBDA){
       beta_reduce_emit(out, &closures[b.lam_idx], args);
+      return;
+    }
+    CompDef *cd = find_comp_def(head);
+    if(cd && cd->v.k == SV_LAMBDA){
+      beta_reduce_emit(out, &closures[cd->v.lam_idx], args);
       return;
     }
     // Try spec-time inline: if every arg is comptime AND the body folds to
@@ -576,43 +612,64 @@ static void emit_expr(FILE *out, u32 node){
 }
 
 /* ---- top-level parsing of defines ----------------------------------------*/
-// Recognize (define NAME (lambda (ARGS) BODY)) and (define (NAME ARGS) BODY).
+// Three accepted shapes:
+//   (define (NAME ARGS...) BODY)         — function form, runtime C function
+//   (define NAME (lambda (ARGS) BODY))   — equivalent to above, runtime C function
+//   (define NAME EXPR)                   — comptime value; eval EXPR at spec time,
+//                                          store as CompDef. EXPR must fold (SV_FIX
+//                                          or SV_LAMBDA); SV_FAIL hard-errors.
 static void record_define(u32 form){
   if(!is_cons(form) || !sym_eq(car(form), "define")){
     fprintf(stderr, "specialize: top-level forms must be `define`\n");
     exit(1);
   }
   u32 head = car(cdr(form));    // either NAME or (NAME ARGS...)
-  u32 rest = cdr(cdr(form));    // remaining: either (LAMBDA) or (BODY)
-  Fn *f = &fns[nfns++];
+  u32 rest = cdr(cdr(form));    // remaining: either (LAMBDA), (BODY), or (EXPR)
 
-  if(is_sym(head)){
-    // (define NAME (lambda (ARGS) BODY))
-    f->name = name_of(head);
-    u32 lam = car(rest);
-    if(!is_cons(lam) || !sym_eq(car(lam), "lambda")){
-      fprintf(stderr, "specialize: `define NAME ...` body must be a lambda\n");
-      exit(1);
-    }
-    u32 params = car(cdr(lam));
-    f->arity = 0;
-    for(u32 p = params; is_cons(p); p = cdr(p)) f->params[f->arity++] = car(p);
-    f->body = car(cdr(cdr(lam)));
-  } else if(is_cons(head)){
+  if(is_cons(head)){
     // (define (NAME ARGS...) BODY)
+    Fn *f = &fns[nfns++];
     f->name = name_of(car(head));
     f->arity = 0;
     for(u32 p = cdr(head); is_cons(p); p = cdr(p)) f->params[f->arity++] = car(p);
     f->body = car(rest);
-  } else {
+    f->comptime_only = is_cons(f->body) && sym_eq(car(f->body), "lambda");
+    return;
+  }
+
+  if(!is_sym(head)){
     fprintf(stderr, "specialize: malformed define\n");
     exit(1);
   }
 
-  // If the body is a bare `(lambda ...)` form, this define is a closure
-  // factory — only meaningful at spec time. Don't emit a runtime C function
-  // for it; the residual won't reference it.
-  f->comptime_only = is_cons(f->body) && sym_eq(car(f->body), "lambda");
+  u32 val_expr = car(rest);
+
+  if(is_cons(val_expr) && sym_eq(car(val_expr), "lambda")){
+    // (define NAME (lambda (ARGS) BODY))
+    Fn *f = &fns[nfns++];
+    f->name = name_of(head);
+    u32 params = car(cdr(val_expr));
+    f->arity = 0;
+    for(u32 p = params; is_cons(p); p = cdr(p)) f->params[f->arity++] = car(p);
+    f->body = car(cdr(cdr(val_expr)));
+    f->comptime_only = is_cons(f->body) && sym_eq(car(f->body), "lambda");
+    return;
+  }
+
+  // (define NAME EXPR) — comptime value binding.
+  eval_ct_fuel = EVAL_CT_FUEL;
+  SVal v = eval_ct(val_expr);
+  if(v.k == SV_FAIL){
+    fprintf(stderr, "specialize: top-level (define %s ...) RHS doesn't fold at spec time\n", symstr(head));
+    exit(1);
+  }
+  if(n_comp_defs >= COMPDEFS_MAX){
+    fprintf(stderr, "specialize: too many top-level comptime defines\n");
+    exit(1);
+  }
+  CompDef *cd = &comp_defs[n_comp_defs++];
+  cd->name = name_of(head);
+  cd->v = v;
 }
 
 /* ---- residual file emitter -----------------------------------------------*/

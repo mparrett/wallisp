@@ -24,6 +24,7 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const NEEDED = ['residual_fib_gen.wasm', 'residual_tak_gen.wasm',
                 'residual_closures_demo_gen.wasm',
                 'residual_closures_v2_demo_gen.wasm',
+                'residual_closures_named_demo_gen.wasm',
                 'residual_fib_untagged.wasm', 'residual_tak_untagged.wasm'];
 const missing = NEEDED.filter(f => !fs.existsSync(path.join(ROOT, f)));
 if (missing.length) {
@@ -70,6 +71,19 @@ const CLOSURES_V2_SRC = `(begin
   (loop 1000 0))`;
 const CLOSURES_V2_IN = '1000 0';
 const CLOSURES_V2_EXPECTED = '505500';
+
+// Closures-v2-deep: same semantics as closures_v2 but with the closure named
+// at top level via `(define add5 (make-adder 5))`. The residual wasm should
+// be byte-identical to closures_v2 — this row exists to make the equivalence
+// visible in the bench output.
+const CLOSURES_NAMED_SRC = `(begin
+  (define (make-adder n) (lambda (x) (+ x n)))
+  (define add5 (make-adder 5))
+  (define (work m) (add5 m))
+  (define (loop i acc) (if (= i 0) acc (loop (- i 1) (+ acc (work i)))))
+  (loop 1000 0))`;
+const CLOSURES_NAMED_IN = '1000 0';
+const CLOSURES_NAMED_EXPECTED = '505500';
 
 async function load(file) {
   const bytes = fs.readFileSync(new URL('../' + file, import.meta.url));
@@ -135,6 +149,15 @@ const BENCHMARKS = [
       ['tree-walker (lisp)',          'lisp_big.wasm',                       CLOSURES_V2_SRC],
       ['bytecode_gc',                 'bytecode_gc.wasm',                    CLOSURES_V2_SRC],
       ['residual (specialize → gen)', 'residual_closures_v2_demo_gen.wasm',  CLOSURES_V2_IN],
+    ],
+  },
+  {
+    name: 'named-add5(1000)',
+    expected: CLOSURES_NAMED_EXPECTED,
+    rows: [
+      ['tree-walker (lisp)',          'lisp_big.wasm',                          CLOSURES_NAMED_SRC],
+      ['bytecode_gc',                 'bytecode_gc.wasm',                       CLOSURES_NAMED_SRC],
+      ['residual (specialize → gen)', 'residual_closures_named_demo_gen.wasm',  CLOSURES_NAMED_IN],
     ],
   },
 ];
