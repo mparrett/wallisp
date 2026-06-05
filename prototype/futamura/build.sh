@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Build the specializer, then use it to (re)generate the residuals from the
-# .lisp sources, then compile those residuals to wasm. Produces:
-#   build/specialize                   the host-side residualizer
-#   build/residual_fib_gen.c           generated fib residual (Lisp -> C)
-#   build/residual_tak_gen.c           generated tak residual
-#   $REPO_ROOT/residual_*_gen.wasm     wasm residuals (lands at repo root, like the engines)
+# Build the specializer + preproc, then use the specializer to (re)generate
+# the residuals from .lisp sources, and compile the residuals to wasm.
+# Produces:
+#   build/specialize                   the host-side residualizer (H9, Lisp -> C)
+#   build/preproc                      the host-side preprocessor  (H10, $-fold)
+#   build/residual_{fib,tak}_gen.c     generated residuals
+#   $REPO_ROOT/residual_*.wasm         wasm residuals (lands at repo root, like engines)
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
@@ -12,6 +13,7 @@ BUILD="$HERE/build"
 mkdir -p "$BUILD"
 
 cc -O2 -Wall -o "$BUILD/specialize" "$HERE/specialize.c"
+cc -O2 -Wall -o "$BUILD/preproc"    "$HERE/preproc.c"
 
 "$BUILD/specialize" < "$HERE/fib.lisp" > "$BUILD/residual_fib_gen.c"
 "$BUILD/specialize" < "$HERE/tak.lisp" > "$BUILD/residual_tak_gen.c"
@@ -32,6 +34,6 @@ clang "${WASMFLAGS[@]}" -o "$REPO_ROOT/residual_fib_untagged.wasm" "$HERE/residu
 clang "${WASMFLAGS[@]}" -o "$REPO_ROOT/residual_tak_untagged.wasm" "$HERE/residual_tak_untagged.c"
 
 echo "built:"
-echo "  $BUILD/specialize"
+echo "  $BUILD/specialize $BUILD/preproc"
 echo "  $REPO_ROOT/residual_fib_gen.wasm $REPO_ROOT/residual_tak_gen.wasm"
 echo "  $REPO_ROOT/residual_fib_untagged.wasm $REPO_ROOT/residual_tak_untagged.wasm"
