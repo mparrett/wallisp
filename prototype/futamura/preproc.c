@@ -8,6 +8,7 @@
 // fall-through to runtime.
 //
 //   ./preproc < input.lisp > residual.lisp
+//   ./preproc --trace < input.lisp > residual.lisp     (logs each fold to stderr)
 //
 // Scope of v1:
 //   * `$expr` may appear anywhere a value can appear.
@@ -162,6 +163,8 @@ static Define* find_define(u32 sym){
 // reductions to bound compile-time work.
 #define FUEL_INIT 200000
 
+static int trace = 0;  // --trace flag: log each $-fold to stderr
+
 static int eval_ct(u32 expr, u32 env, int *fuel, u32 *out);
 
 static int env_lookup(u32 env, u32 sym, u32 *out){
@@ -281,6 +284,8 @@ static int eval_ct(u32 expr, u32 env, int *fuel, u32 *out){
 }
 
 /* ---- tree rewrite (replace `(__comptime__ X)` with eval result) ----------*/
+static void print_val(FILE *out, u32 v);  // forward decl — used by trace output
+
 static u32 rewrite(u32 expr){
   if(!is_cons(expr)) return expr;
   if(sym_eq_str(car(expr), "__comptime__")){
@@ -290,6 +295,13 @@ static u32 rewrite(u32 expr){
     u32 result;
     if(!eval_ct(inner, NIL, &fuel, &result)){
       exit(1);  // diagnostic already printed
+    }
+    if(trace){
+      fputc('$', stderr);
+      print_val(stderr, inner);
+      fputs(" => ", stderr);
+      print_val(stderr, result);
+      fputc('\n', stderr);
     }
     return result;
   }
@@ -304,8 +316,6 @@ static u32 rewrite(u32 expr){
 }
 
 /* ---- printer (emits wallisp source) --------------------------------------*/
-static void print_val(FILE *out, u32 v);
-
 static void print_int(FILE *out, i32 n){ fprintf(out, "%d", n); }
 
 static void print_val(FILE *out, u32 v){
@@ -353,7 +363,11 @@ static void register_define(u32 form){
   }
 }
 
-int main(void){
+int main(int argc, char **argv){
+  for(int i = 1; i < argc; i++){
+    if(strcmp(argv[i], "--trace") == 0) trace = 1;
+    else { fprintf(stderr, "preproc: unknown arg `%s`\n", argv[i]); return 2; }
+  }
   static char buf[1 << 22];
   size_t got = fread(buf, 1, sizeof buf, stdin);
   rp = buf; rend = buf + got;
