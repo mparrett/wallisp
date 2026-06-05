@@ -11,6 +11,10 @@ bc_base.wasm
 bc_inline.wasm
 bc_super.wasm
 
+# Futamura residuals — regenerable via `bash prototype/futamura/build.sh`
+residual_*.wasm
+prototype/futamura/build/
+
 # Native binaries (Mach-O / ELF, platform-specific)
 native_bench_*
 native_cli_*
