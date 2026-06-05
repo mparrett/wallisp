@@ -22,6 +22,7 @@ import path from 'path';
 // Self-bootstrap: if any residual is missing, run the futamura build script.
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const NEEDED = ['residual_fib_gen.wasm', 'residual_tak_gen.wasm',
+                'residual_closures_demo_gen.wasm',
                 'residual_fib_untagged.wasm', 'residual_tak_untagged.wasm'];
 const missing = NEEDED.filter(f => !fs.existsSync(path.join(ROOT, f)));
 if (missing.length) {
@@ -44,6 +45,17 @@ const TAK_SRC = `(begin
   (tak 18 12 6))`;
 const TAK_IN = '18 12 6';
 const TAK_EXPECTED = '7';
+
+// Closures-v1 demo: validates `let` + inline-lambda specialization. The body
+// of `work` reduces to `(+ n 15)` at spec time after the let bindings (k=5,
+// m=10) and the inline lambda application both substitute through. `loop`
+// iterates work 1000 times.
+const CLOSURES_SRC = `(begin
+  (define (work n) (let ((k 5) (m 10)) ((lambda (x) (+ x (+ k m))) n)))
+  (define (loop i acc) (if (= i 0) acc (loop (- i 1) (+ acc (work i)))))
+  (loop 1000 0))`;
+const CLOSURES_IN = '1000 0';
+const CLOSURES_EXPECTED = '515500';
 
 async function load(file) {
   const bytes = fs.readFileSync(new URL('../' + file, import.meta.url));
@@ -93,6 +105,15 @@ const BENCHMARKS = [
       ['residual: untagged (i32)',    'residual_tak_untagged.wasm', TAK_IN],
     ],
   },
+  {
+    name: 'closures-loop(1000)',
+    expected: CLOSURES_EXPECTED,
+    rows: [
+      ['tree-walker (lisp)',          'lisp_big.wasm',                       CLOSURES_SRC],
+      ['bytecode_gc',                 'bytecode_gc.wasm',                    CLOSURES_SRC],
+      ['residual (specialize → gen)', 'residual_closures_demo_gen.wasm',     CLOSURES_IN],
+    ],
+  },
 ];
 
 const main = async () => {
@@ -123,11 +144,15 @@ const main = async () => {
 
     console.log('\nratios:');
     const m = Object.fromEntries(runs.map(r => [r.name, r.ms]));
-    console.log(`  tree-walker / bytecode_gc          = ${(m['tree-walker (lisp)'] / m['bytecode_gc']).toFixed(2)}x`);
-    console.log(`  bytecode_gc / residual (gen)       = ${(m['bytecode_gc'] / m['residual (specialize → gen)']).toFixed(2)}x`);
-    console.log(`  residual gen / residual i32        = ${(m['residual (specialize → gen)'] / m['residual: untagged (i32)']).toFixed(2)}x`);
-    console.log(`  tree-walker / residual (gen)       = ${(m['tree-walker (lisp)'] / m['residual (specialize → gen)']).toFixed(2)}x`);
-    console.log(`  tree-walker / residual (i32)       = ${(m['tree-walker (lisp)'] / m['residual: untagged (i32)']).toFixed(2)}x`);
+    const tw_   = m['tree-walker (lisp)'];
+    const bcgc  = m['bytecode_gc'];
+    const gen   = m['residual (specialize → gen)'];
+    const i32_  = m['residual: untagged (i32)'];
+    if (tw_ && bcgc)       console.log(`  tree-walker / bytecode_gc          = ${(tw_  / bcgc).toFixed(2)}x`);
+    if (bcgc && gen)       console.log(`  bytecode_gc / residual (gen)       = ${(bcgc / gen).toFixed(2)}x`);
+    if (gen  && i32_)      console.log(`  residual gen / residual i32        = ${(gen  / i32_).toFixed(2)}x`);
+    if (tw_  && gen)       console.log(`  tree-walker / residual (gen)       = ${(tw_  / gen).toFixed(2)}x`);
+    if (tw_  && i32_)      console.log(`  tree-walker / residual (i32)       = ${(tw_  / i32_).toFixed(2)}x`);
   }
 };
 

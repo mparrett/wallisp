@@ -140,6 +140,24 @@ typedef struct {
 static Fn fns[32];
 static int nfns = 0;
 
+/* ---- spec-time env (for let bindings and lambda parameter binding) --------*/
+// Tracks locally-bound symbols inside a function body. Two kinds:
+//   BV_FIX     — bound to a known comptime fixnum (substituted at spec time)
+//   BV_RUNTIME — bound to a runtime C variable (emitted as the symbol name)
+// Function parameters and top-level def names are NOT pushed here; their
+// emission falls through to `symstr()` as before.
+typedef enum { BV_FIX, BV_RUNTIME } BVKind;
+typedef struct { u32 name; BVKind k; i32 fix; } Binding;
+#define ENV_MAX 64
+static Binding env_stack[ENV_MAX];
+static int env_top = 0;
+
+static int env_lookup(u32 sym, Binding *out){
+  for(int i = env_top - 1; i >= 0; i--)
+    if(env_stack[i].name == sym){ *out = env_stack[i]; return 1; }
+  return 0;
+}
+
 static const char* name_of(u32 sym){
   // dup into a fresh malloc so it survives later symstr() calls.
   u32 i = symidx(sym);
@@ -175,8 +193,83 @@ static int sym_eq(u32 v, const char *s){
   return symlen[i] == strlen(s) && memcmp(symname[i], s, symlen[i]) == 0;
 }
 
-// Emit one expression, parenthesized.
+// Forward decl — used by eval_ct_fix.
 static void emit_expr(FILE *out, u32 node);
+
+// Try to evaluate `node` as a comptime fixnum using the current env. Returns
+// 1 on success (writing the value to *out), 0 on failure. Used to decide
+// whether a `let` or lambda RHS can be substituted at spec time vs. emitted
+// as a runtime C local.
+static int eval_ct_fix(u32 node, i32 *out){
+  if(is_fix(node)){ *out = fixval(node); return 1; }
+  if(is_sym(node)){
+    Binding b;
+    if(env_lookup(node, &b) && b.k == BV_FIX){ *out = b.fix; return 1; }
+    return 0;
+  }
+  if(!is_cons(node)) return 0;
+  u32 head = car(node), args = cdr(node);
+  BinOp *bo = find_binop(head);
+  if(!bo) return 0;  // only fold binops at spec time, not user calls
+  if(!is_cons(args) || !is_cons(cdr(args))) return 0;
+  i32 a, b;
+  if(!eval_ct_fix(car(args), &a)) return 0;
+  if(!eval_ct_fix(car(cdr(args)), &b)) return 0;
+  const char *op = bo->c_int_op;
+  if(op[0]=='+' && op[1]==0){ *out = a + b; return 1; }
+  if(op[0]=='-' && op[1]==0){ *out = a - b; return 1; }
+  if(op[0]=='*' && op[1]==0){ *out = a * b; return 1; }
+  if(op[0]=='<' && op[1]==0){ *out = a < b; return 1; }
+  if(op[0]=='>' && op[1]==0){ *out = a > b; return 1; }
+  if(op[0]=='=' && op[1]=='='){ *out = a == b; return 1; }
+  if(op[0]=='%' && op[1]==0){ if(b==0) return 0; *out = a % b; return 1; }
+  return 0;
+}
+
+// Bind a parallel list of params and RHS expressions, then emit `body` with
+// the extended env. Used by both `let` and inline `((lambda (params) body) args)`.
+// For each (param, rhs): if rhs is a comptime fixnum, push BV_FIX (substituted
+// inline at spec time). Otherwise emit a runtime C local and push BV_RUNTIME.
+// If any binding is runtime, the whole construct is wrapped in a statement
+// expression `({ ... })` so it can be used in expression position.
+static void bind_and_emit_body(FILE *out, u32 params, u32 rhs_list, u32 body){
+  // First pass: count runtime bindings to decide if we need a statement-expr wrapper.
+  int n_runtime = 0;
+  {
+    u32 p = params, r = rhs_list;
+    for(; is_cons(p) && is_cons(r); p = cdr(p), r = cdr(r)){
+      i32 v;
+      if(!eval_ct_fix(car(r), &v)) n_runtime++;
+    }
+  }
+
+  int opened = 0;
+  if(n_runtime > 0){ fputs("({", out); opened = 1; }
+
+  int pushed = 0;
+  {
+    u32 p = params, r = rhs_list;
+    for(; is_cons(p) && is_cons(r); p = cdr(p), r = cdr(r)){
+      u32 name = car(p), rhs = car(r);
+      i32 vfix;
+      if(eval_ct_fix(rhs, &vfix)){
+        env_stack[env_top++] = (Binding){name, BV_FIX, vfix};
+      } else {
+        fprintf(out, " u32 %s = ", symstr(name));
+        emit_expr(out, rhs);
+        fputs(";", out);
+        env_stack[env_top++] = (Binding){name, BV_RUNTIME, 0};
+      }
+      pushed++;
+    }
+  }
+
+  if(opened) fputc(' ', out);
+  emit_expr(out, body);
+  if(opened) fputs("; })", out);
+
+  env_top -= pushed;
+}
 
 // Convenience: emit (fixval(EXPR)) where EXPR is the C for node.
 static void emit_fixval(FILE *out, u32 node){
@@ -191,7 +284,15 @@ static void emit_expr(FILE *out, u32 node){
     return;
   }
   if(is_sym(node)){
-    // Parameter or other top-level function reference — emit the name as-is.
+    // Check the spec-time env first. If bound to a comptime fixnum, substitute
+    // the literal at spec time; if bound to a runtime C local, emit the name.
+    // Otherwise fall through to the existing "emit symbol name" behavior
+    // (function parameter or top-level function reference).
+    Binding b;
+    if(env_lookup(node, &b)){
+      if(b.k == BV_FIX){ fprintf(out, "mkfix(%d)", b.fix); return; }
+      // BV_RUNTIME: fall through to symstr below.
+    }
     fputs(symstr(node), out);
     return;
   }
@@ -209,6 +310,34 @@ static void emit_expr(FILE *out, u32 node){
     fputs(" ? ", out); emit_expr(out, t);
     fputs(" : ", out); emit_expr(out, e);
     fputc(')', out);
+    return;
+  }
+
+  // (let ((x V) ...) body) — bind each (x, V) at spec time; substitute
+  // comptime RHSs inline, emit runtime RHSs as C locals.
+  if(sym_eq(head, "let")){
+    u32 bindings = car(args);
+    u32 body = car(cdr(args));
+    // Reshape (((x V) (y W) ...) body) into parallel param/rhs lists for
+    // bind_and_emit_body. Easiest: build the two lists in cons-cell arenas.
+    u32 params = NIL, last_p = NIL;
+    u32 rhss   = NIL, last_r = NIL;
+    for(u32 p = bindings; is_cons(p); p = cdr(p)){
+      u32 b = car(p);
+      u32 lp = cons(car(b), NIL);
+      u32 lr = cons(car(cdr(b)), NIL);
+      if(is_nil(params)){ params = lp; last_p = lp; } else { cells[considx(last_p)].cdr = lp; last_p = lp; }
+      if(is_nil(rhss)){   rhss = lr;   last_r = lr; } else { cells[considx(last_r)].cdr = lr; last_r = lr; }
+    }
+    bind_and_emit_body(out, params, rhss, body);
+    return;
+  }
+
+  // Inline lambda application: ((lambda (params) body) args...)
+  if(is_cons(head) && sym_eq(car(head), "lambda")){
+    u32 params = car(cdr(head));
+    u32 body   = car(cdr(cdr(head)));
+    bind_and_emit_body(out, params, args, body);
     return;
   }
 
