@@ -2415,6 +2415,17 @@ removes. Only structural collapse (PE) does.
   here. The number will shrink — possibly to single digits — on
   workloads where the residual must carry a cell arena (nrev+sum) or
   closure/env machinery (metacircular eval).
+- **S4 (size collapses too, not just speed).** PE gives a comparable
+  size win in parallel with the speed win. fib residual = **820 B**,
+  tak residual = **1.2 KB**. Engines for comparison: `lisp.wasm`
+  (smallest) 12 KB, `bc_super.wasm` 15 KB, `bytecode.wasm` 21 KB,
+  `bytecode_gc.wasm` 26 KB. fib residual is **32× smaller than
+  `bytecode_gc`** and 15× smaller than the tree-walker. The shape
+  tracks intuitively: engines ship the whole interpreter (reader, env
+  chain, dispatch loop, 17 primitives, arena); the residual ships
+  just `fib` + a parse-int/emit-int shim and no arena. The cost paid
+  for both wins is generality — `residual_fib_gen.wasm` runs *only*
+  fib.
 
 ### What this answers
 
@@ -2456,3 +2467,181 @@ it's just the top of the ladder we were already climbing.
   compiles to wasm at the repo root.
 - `harness/bench_futamura.mjs` — self-bootstrapping bench. If the
   residual wasm is missing, runs `build.sh` first.
+
+## H10 — `$`-marked source-to-source PE: opt-in comptime folding in wallisp (CONFIRMED, magnitude reuse-dependent)
+
+**Pre-registered prediction** (stated in chat, not in a `feat_*.md`):
+"A hard-fail `$expr` marker that folds the form at preprocess time
+will yield a measurable speedup on programs where the comptime-known
+result is reused at runtime. Magnitude scales with reuse factor;
+hard-fail (not soft-fail) is the design — `$` is a promise, not a
+hint."
+
+**Verdict.** Confirmed on a benchmark deliberately constructed for
+high reuse. The folded program is **68.9× faster on `lisp_big`** and
+**59.9× faster on `bytecode_gc`** than its unmarked twin. Both
+produce identical output.
+
+> Context-honest disclosure: like H9, H10 came out of the same
+> 2026-06-04 exploratory session prompted by the
+> `docs/project_incoming/comptime-2026-06-04.c` drop. Pre-reg lives
+> in the session transcript, not a `feat_*.md`. Magnitude here is
+> *reuse-dependent* in a way H9's wasn't — see "what this is NOT"
+> below.
+
+### What was measured
+
+Demo program (`prototype/futamura/comptime_demo.lisp`):
+
+```lisp
+(define (sum-to n) (if (= n 0) 0 (+ n (sum-to (- n 1)))))
+(define (work x) (+ x $(sum-to 100)))
+(define (loop n acc) (if (= n 0) acc (loop (- n 1) (+ acc (work n)))))
+(loop 1000 0)
+```
+
+Two configurations:
+- **unmarked**: the `$` removed (`(define (work x) (+ x (sum-to
+  100)))`). Engine sees a regular recursive program; every `(work
+  x)` invocation does 100 recursive `sum-to` calls.
+- **folded**: preproc evaluates `$(sum-to 100)` at preprocess time
+  and substitutes `5050` into the AST. Engine sees `(define (work x)
+  (+ x 5050))`; `sum-to` is never called at runtime.
+
+Both produce `5550500` (correctness gate). Best-of-25, wasm-on-V8:
+
+| engine                | unmarked  | folded   | speedup  |
+|-----------------------|----------:|---------:|---------:|
+| `lisp_big.wasm` (TW)  | 18.523 ms | 0.269 ms | **68.9×** |
+| `bytecode_gc.wasm`    |  4.940 ms | 0.083 ms | **59.9×** |
+
+### Mechanism
+
+`$(sum-to 100)` is evaluated once at preprocess time by an in-host
+evaluator with a 200K-reduction fuel cap. It produces `5050`, which
+preproc substitutes into the AST. The engines never see the `$`;
+they receive plain wallisp source.
+
+Per-iteration cost of `(work x)`:
+- Unmarked: 1 outer add + ~100 recursive `sum-to` calls (each: comparison, subtract, add, function call).
+- Folded: 1 outer add. Period.
+
+For 1000 outer iterations: 1000 × (~100 calls) = ~100K eliminated
+recursive calls. The speedup tracks the *reuse factor* of the
+folded value.
+
+### What this is NOT
+
+The 60× is **not a general "PE gives you ~60×" claim.** It's
+specifically the reuse factor of this benchmark. On a real program
+the savings is:
+
+> `runtime_uses_of_($-fold_result) × cost_per_evaluation`
+
+`$(sum-to 100)` used once at top level: save one `sum-to(100)` worth
+— invisible. Used inside a 1000-iteration loop: save 1000×. The
+demo's ratio reflects the demo's design, not source-to-source PE
+generally.
+
+Compare H9: that 50× was *structural* — collapsing the eval loop
+entirely benefits every program equally because every program runs
+through the eval loop. H10's win is *conditional* on the program
+containing comptime-knowable subexpressions that get reused at
+runtime.
+
+### Comparison to H9
+
+| axis                  | H9 (Futamura #1)         | H10 (`$`-PE)             |
+|-----------------------|--------------------------|--------------------------|
+| target                | Lisp → C → wasm          | Lisp → Lisp              |
+| substrate             | leaves Lisp entirely     | stays on existing engines |
+| toolchain added       | spec + clang + wasm-ld   | spec, one pipe           |
+| win source            | eval loop removed        | partial subexpr folded   |
+| win generality        | structural, every program | conditional on reuse    |
+| win magnitude (demo)  | 50–65×                   | 60–69×                   |
+| engineering           | 280 LOC + new toolchain  | 340 LOC, no toolchain    |
+| programmer effort     | none                     | mark sites with `$`      |
+
+**H9 and H10 are complementary, not competitive.** H9: "your whole
+program is comptime-known" → ship a residual binary. H10: "parts of
+your program are comptime-known" → fold them, run the rest normally.
+
+### Hard-fail design
+
+`$E` is a *promise*: it folds, period. If folding fails — unbound
+symbol, unknown function, fuel exhausted, unsupported construct —
+preproc prints a diagnostic and exits non-zero. No soft fall-through
+to runtime.
+
+```
+$ echo '(define (f x) $(+ x 1))' | preproc
+preproc: $-fold: unbound symbol `x`
+exit: 1
+
+$ echo '(define (f x) $(no-such-fn 1 2))' | preproc
+preproc: $-fold: unknown function `no-such-fn`
+exit: 1
+```
+
+The argument for hard-fail over soft-fail (decided pre-build):
+1. **Semantic clarity.** `$x` means "this folds, period." Soft-fail
+   makes it "maybe folds" — kills compositional reasoning.
+2. **Catches the most common comptime bug.** Passing a runtime value
+   into a comptime slot. Hard-fail errors immediately; soft-fail
+   silently runs at runtime and the user "optimizes" nothing.
+3. **Simpler to implement.** Hard-fail = "try fold, error on
+   failure." Soft-fail needs to distinguish "graceful fall-through
+   (fine)" from "actual bug (not fine)" — that's the harder code.
+
+Convergent signal: `barrier()` in
+`docs/project_incoming/comptime-2026-06-04.c`, Zig's `comptime`, C++
+`constexpr` all chose hard-fail. The pattern won by convergence
+across multiple language designs.
+
+### Scope of v1 preproc
+
+Supported inside `$E`:
+- Integer literals
+- Parameter references (must resolve to a comptime value in scope)
+- `if`, `+ - * < > = mod`
+- Named function calls into top-level `(define ...)` forms (with
+  recursion up to the fuel cap)
+
+Not supported (hard-fails):
+- `cons`/`car`/`cdr` (no cell rep in the folder)
+- Strings, characters
+- `lambda` as a value
+- `let`, `cond`, `begin` inside the folded expression
+- `set!`, mutation
+
+Extension plan (not pursued in v1):
+- `cons/car/cdr` to enable folded lookup tables
+- `let` and `cond` desugar to call / nested `if`; cheap to add
+- `lambda` as a value would need closures in the folder; bigger lift
+
+### Open questions
+
+- **Does the speedup transfer to programs where reuse isn't engineered
+  in?** The demo was hand-built to maximize reuse. On programs people
+  actually write, the typical reuse factor is unknown. Worth measuring
+  on the metacircular eval or a real config-threading example.
+- **Is there a soft-fail variant worth having?** Maybe a `?E`
+  best-effort marker that complements `$E`. Not pursued; hard-fail is
+  the design.
+- **Composes with H9?** PE-fold first (H10), then specialize the
+  folded program to C (H9), gets you "Futamura #1 on a
+  pre-optimized source." Untried; likely adds noise to H9's number,
+  not a clean composition.
+
+### Artifacts (`prototype/futamura/`)
+
+- `preproc.c` (~340 LOC) — host-side preprocessor. Reads Lisp on
+  stdin, writes Lisp on stdout. Hard-fails with a diagnostic if a
+  `$`-form can't be folded.
+- `comptime_demo.lisp` — input with `$(sum-to 100)`.
+- `comptime_demo_unmarked.lisp` — identical program with `$` removed,
+  for measuring the win.
+- `build.sh` — also builds `build/preproc` alongside the H9
+  specializer.
+- `harness/bench_preproc.mjs` — self-bootstrapping bench across
+  `lisp_big.wasm` and `bytecode_gc.wasm`.
