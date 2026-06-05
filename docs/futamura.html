@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wallisp — when you stop interpreting</title>
+<meta name="description" content="Two ways to remove the eval loop from a tiny Lisp on WebAssembly: partial-evaluate the interpreter against a source program (Futamura projection #1), or mark forms for compile-time folding with a hard-fail comptime keyword.">
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/c.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/scheme.min.js"></script>
+<script>addEventListener('DOMContentLoaded', () => hljs.highlightAll());</script>
+
+<style>
+:root {
+  --accent: #c14a3a;
+  --accent-soft: #f0d5cf;
+  --ink: #1a1a1a;
+  --ink-soft: #4b5563;
+  --ink-muted: #6b7280;
+  --bg: #fefefe;
+  --bg-soft: #f7f5f2;
+  --border: #e5e2dd;
+  --bar: #4a6072;
+  --bar-good: #2f7d4a;
+  --bar-bad: #c14a3a;
+  --baseline: #c8c4be;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  line-height: 1.65;
+  font-size: 17px;
+}
+
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 4rem 1.5rem 6rem;
+}
+
+header.hero { margin-bottom: 4rem; }
+
+header.hero .eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 0.75rem;
+}
+
+h1 {
+  font-size: 2.5rem;
+  line-height: 1.15;
+  margin: 0 0 1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+header.hero .lede {
+  font-size: 1.2rem;
+  color: var(--ink-soft);
+  margin: 0;
+  max-width: 580px;
+}
+
+h2 {
+  font-size: 1.6rem;
+  line-height: 1.25;
+  margin: 4rem 0 1rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+h2 .section-num {
+  color: var(--accent);
+  font-weight: 500;
+  margin-right: 0.5em;
+  font-variant-numeric: tabular-nums;
+}
+
+h3 {
+  font-size: 1.15rem;
+  margin: 2rem 0 0.5rem;
+  font-weight: 600;
+}
+
+p { margin: 0 0 1rem; }
+
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-soft); }
+a:hover { border-bottom-color: var(--accent); }
+
+details {
+  border-top: 1px solid var(--border);
+  margin: 0;
+}
+details:last-of-type { border-bottom: 1px solid var(--border); margin-bottom: 2rem; }
+
+summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  padding: 1.25rem 0;
+}
+summary::-webkit-details-marker { display: none; }
+summary::before {
+  content: "+";
+  color: var(--accent);
+  font-weight: 400;
+  font-size: 1.25rem;
+  margin-right: 0.65em;
+  display: inline-block;
+  width: 1ch;
+  text-align: center;
+}
+details[open] > summary::before { content: "−"; }
+
+summary > h2 {
+  margin: 0;
+  display: inline;
+  font-size: 1.4rem;
+}
+summary:hover > h2 { color: var(--accent); }
+
+details[open] { padding-bottom: 2.5rem; }
+details[open] > summary { padding-bottom: 1rem; }
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  background: var(--bg-soft);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+pre {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  overflow-x: auto;
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 1.5rem 0;
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.snippet-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.snippet-pair > div h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
+.snippet-pair pre { margin: 0; }
+
+@media (max-width: 760px) {
+  .snippet-pair { grid-template-columns: 1fr; }
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.5rem 0;
+  font-size: 0.95rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  font-weight: 600;
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 2px solid var(--border);
+}
+
+td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; }
+td.engine { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.9em; }
+
+figure { margin: 2rem 0; }
+
+figcaption {
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+  margin-top: 0.75rem;
+  line-height: 1.5;
+}
+
+.callout {
+  background: var(--bg-soft);
+  border-left: 3px solid var(--accent);
+  padding: 1rem 1.25rem;
+  margin: 1.5rem 0;
+  font-size: 0.97rem;
+}
+
+.callout p:last-child { margin-bottom: 0; }
+
+.kicker {
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+footer {
+  max-width: 720px;
+  margin: 6rem auto 3rem;
+  padding: 2rem 1.5rem 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.92rem;
+  color: var(--ink-muted);
+}
+
+footer p { margin-bottom: 0.5rem; }
+footer a { color: var(--ink-soft); border-bottom-color: var(--border); }
+</style>
+</head>
+
+<body>
+
+<div class="wrap">
+<header class="hero">
+  <div class="eyebrow">Partial evaluation</div>
+  <h1>When you stop interpreting</h1>
+  <p class="lede">Two ways to remove the eval loop from a tiny Lisp. Both predicted small wins. Both delivered 50&ndash;65&times;.</p>
+</header>
+
+<p>This page is a follow-on to the main <a href="index.html">wallisp study</a>, which built the same Lisp eight ways and compared engines on the same benchmarks. Bytecode beat the tree-walker by ~2.5&times;. A four-rung <em>optimization ladder</em> inside the bytecode line (<code>bc_orig</code> &rarr; <code>bc_base</code> &rarr; <code>bc_inline</code> &rarr; <code>bc_super</code>) found one more 1.6&times; by hoisting primitive dispatch from the VM to the compiler. The pattern: each rung does more at compile time, less at runtime.</p>
+
+<p>What if the limit of that ladder is "do <em>all</em> of it at compile time"? Partial evaluation says: specialize the interpreter against a particular source program, and the result is the source program <em>without</em> the interpreter. That's the Futamura projection &mdash; old idea, well-known on paper. We hadn't measured it on our engines.</p>
+
+<p>We tried two flavors: <strong>H9</strong>, leaving Lisp entirely (Lisp&rarr;C residual, compile to wasm, run); and <strong>H10</strong>, staying in Lisp with an opt-in <code>$</code> comptime marker. Both predictions were 3&ndash;5&times;. Both came in 10&ndash;20&times; larger than predicted. The misses are the interesting part.</p>
+
+<details>
+<summary><h2><span class="section-num">1</span>Setup &mdash; when the eval loop <em>is</em> the cost</h2></summary>
+
+<p>The bytecode VM&rsquo;s hot loop dispatches through a <code>br_table</code> over 14 opcodes. V8 specializes each arm hard &mdash; we&rsquo;d already verified this in the wasm-dispatch study (see <code>docs/project_notes/wasm_dispatch.md</code>). The per-opcode cost is genuinely small. So removing dispatch shouldn&rsquo;t buy much: bytecode is already 2.5&times; faster than the tree-walker, and that&rsquo;s the dispatch-removal layer.</p>
+
+<p>The optimization ladder confirmed the diminishing-returns story. Each rung trades generality for speed:</p>
+
+<table>
+  <thead>
+    <tr><th>rung</th><th>what it adds</th><th class="num">vs base</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>bc_base</code></td><td>baseline (apply_prim, args consed)</td><td class="num">1.0&times;</td></tr>
+    <tr><td><code>bc_inline</code></td><td>VM checks <code>is_prim</code> at runtime, inlines 2-arg arith</td><td class="num">1.2&times;</td></tr>
+    <tr><td><code>bc_super</code></td><td>compiler emits dedicated <code>OP_PADD</code>&hellip; superinstructions</td><td class="num">1.6&times;</td></tr>
+  </tbody>
+</table>
+
+<p>So the natural prediction was: removing the eval loop entirely should buy maybe one more 1.6&times;-shaped step. Maybe 3&ndash;5&times; in total, since you also remove the call-frame and operand-stack accounting. We pre-registered that.</p>
+
+<p>The prediction was 10&ndash;20&times; off.</p>
+
+</details>
+
+<details>
+<summary><h2><span class="section-num">2</span>H9 &mdash; leaving Lisp entirely</h2></summary>
+
+<p>The Futamura projection #1, by hand: write a C function that does what <code>(fib 24)</code> would do, with the same 30-bit tagged-fixnum representation as <code>engines/lisp.c</code>. The interpreter loop is gone; the value rep is preserved. Compile to wasm with the same flags as the engines, run through the same <code>eval_source</code> ABI.</p>
+
+<pre><code class="language-c">// residual_fib_tagged: PE residual, dispatch removed, value rep preserved.
+#define mkfix(n)   ((u32)(((i32)(n)) &lt;&lt; 2))
+#define fixval(v)  (((i32)(v)) &gt;&gt; 2)
+
+static u32 fib(u32 n) {
+  if (fixval(n) &lt; 2) return n;
+  u32 a = fib(mkfix(fixval(n) - 1));
+  u32 b = fib(mkfix(fixval(n) - 2));
+  return mkfix(fixval(a) + fixval(b));
+}</code></pre>
+
+<p>Pre-registered prediction (stated mid-session): <code>bytecode_gc / residual</code> ratio of 3&ndash;5&times;. The dispatch-removal logic that produced bytecode&rsquo;s 2.5&times; lead over the tree-walker, applied one more time.</p>
+
+<table>
+  <thead>
+    <tr><th>engine</th><th>wasm</th><th class="num">fib(24)</th><th class="num">vs tree-walker</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>tree-walker</td><td><code>lisp_big.wasm</code></td><td class="num">19.30 ms</td><td class="num">1.00&times;</td></tr>
+    <tr><td>bytecode_gc</td><td><code>bytecode_gc.wasm</code></td><td class="num">7.63 ms</td><td class="num">2.53&times;</td></tr>
+    <tr><td>residual: tagged</td><td><code>residual_fib_gen.wasm</code></td><td class="num"><strong>0.150 ms</strong></td><td class="num"><strong>128.7&times;</strong></td></tr>
+    <tr><td>residual: i32</td><td><code>residual_fib_untagged.wasm</code></td><td class="num">0.094 ms</td><td class="num">205.9&times;</td></tr>
+  </tbody>
+  <figcaption>fib(24), best-of-25, wasm-on-V8. The tagged residual is the apples-to-apples comparison &mdash; same value rep as the engines. The untagged variant is what a smarter PE with type-flow analysis would emit, included as a reference point.</figcaption>
+</table>
+
+<div class="callout">
+  <p><strong>Predicted 3&ndash;5&times; over <code>bytecode_gc</code>. Measured 50.9&times;.</strong> The pre-registered model was 10&ndash;20&times; too small.</p>
+</div>
+
+<p>The naive model treated the cost as per-opcode dispatch (which V8 specializes). The actual cost is the <em>count</em> of opcodes per recursive call &mdash; for fib(24)&rsquo;s ~150K recursive calls, each does <code>LOADL</code> &times; params, <code>LOADG</code> for the recursive self-reference, <code>CALL</code> with arg-list construction, <code>RET</code> with frame teardown: ~50 dispatched opcodes per call, ~7.5M total. The residual collapses every call to one C function call. V8 inlines and specializes a recursive C function much more aggressively than it inlines a run loop that <em>contains</em> a recursive dispatch.</p>
+
+<p>This amplifies the H8 finding from the main study: V8 specializes the bytecode VM&rsquo;s <code>br_table</code> per-arm, which is real but <em>bounded</em>. The remaining cost is the per-call accounting that no per-arm specialization removes. Only structural collapse &mdash; PE &mdash; does.</p>
+
+<h3>The specializer</h3>
+
+<p>The hand-written residual is the proof of concept. The thing that makes it Futamura #1 is a <em>specializer</em>: a host-side program that reads any Lisp source and emits the residual mechanically. <code>prototype/futamura/specialize.c</code> is ~280 lines that walks the AST &mdash; if a node is comptime-known (<code>if</code> head, <code>+</code> head, parameter ref), it picks the branch; if a node is runtime (a function call with runtime args), it emits the C call. The pattern is &ldquo;eval-or-emit&rdquo;: every AST node either folds to a value or emits residual code, never both. (Background on the technique generally: <a href="https://en.wikipedia.org/wiki/Partial_evaluation">Wikipedia: partial evaluation</a>.)</p>
+
+<div class="snippet-pair">
+<div>
+<h4>Input <code>fib.lisp</code></h4>
+<pre><code class="language-scheme">(define (fib n)
+  (if (&lt; n 2)
+      n
+      (+ (fib (- n 1))
+         (fib (- n 2)))))</code></pre>
+</div>
+<div>
+<h4>Generated residual (excerpt)</h4>
+<pre><code class="language-c">static u32 fib(u32 n){
+  return (fixval(mkfix(fixval(n) &lt; fixval(mkfix(2))))
+          ? n
+          : mkfix(fixval(fib(mkfix(fixval(n) - fixval(mkfix(1)))))
+                + fixval(fib(mkfix(fixval(n) - fixval(mkfix(2)))))));
+}</code></pre>
+</div>
+</div>
+
+<p>The generator&rsquo;s output is verbose. <code>fixval(mkfix(x))</code> is just <code>x</code>; the generator doesn&rsquo;t simplify, it just emits. clang&rsquo;s <code>-O2</code> folds the redundancy. The wasm produced from this is <strong>byte-identical</strong> to the hand-written tagged residual &mdash; verified via <code>cmp</code> on both <code>fib</code> and <code>tak</code>. The specializer hits the ceiling for tagged-rep PE without needing its own simplification pass.</p>
+
+<p>Cross-check on <code>tak(18,12,6)</code>: <code>bytecode_gc / residual</code> = 65.4&times;. Same shape as fib, different program. The 50&ndash;65&times; ratio is robust, not fib-specific.</p>
+
+<h3>Bonus: size collapses too</h3>
+
+<p>PE removes work and removes code in the same move. The fib residual is <strong>820 bytes</strong> of wasm; <code>bytecode_gc.wasm</code> is 26&nbsp;KB. The cost paid for both wins is generality &mdash; the residual runs <em>only</em> fib.</p>
+
+<table>
+  <thead>
+    <tr><th>artifact</th><th class="num">size</th><th>notes</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>residual_fib_gen.wasm</code></td><td class="num"><strong>820 B</strong></td><td>PE&rsquo;d fib</td></tr>
+    <tr><td><code>residual_tak_gen.wasm</code></td><td class="num">1.2 KB</td><td>PE&rsquo;d tak</td></tr>
+    <tr><td><code>lisp.wasm</code></td><td class="num">12 KB</td><td>smallest engine (tree-walker)</td></tr>
+    <tr><td><code>bc_super.wasm</code></td><td class="num">15 KB</td><td>top of the optimization ladder</td></tr>
+    <tr><td><code>bytecode_gc.wasm</code></td><td class="num">26 KB</td><td>the &ldquo;finalist&rdquo;</td></tr>
+  </tbody>
+</table>
+
+<p>Same mechanism behind both wins: collapsing the dispatch loop drops the count of instructions executed (speed) and the amount of code that has to exist (size). One move, two numbers.</p>
+
+</details>
+
+<details>
+<summary><h2><span class="section-num">3</span>H10 &mdash; staying in Lisp with <code>$</code></h2></summary>
+
+<p>H9 is the most aggressive thing PE can do: leave the source language entirely. The opposite end of the spectrum is "do the same eval-or-emit walk, but emit Lisp." The engines stay the runtime; PE just hands them a smaller program with some subexpressions pre-folded.</p>
+
+<p>The honest blocker is that <em>finding</em> foldable subexpressions automatically is hard. Binding-time analysis &mdash; the standard PE technique &mdash; is a lot of code and prone to either missing folds or being conservative. Our shortcut: let the programmer mark them. A <code>$</code> prefix on a form means "fold this at preprocess time." If it can&rsquo;t be folded, preproc errors out.</p>
+
+<pre><code class="language-scheme">(define (sum-to n)
+  (if (= n 0) 0 (+ n (sum-to (- n 1)))))
+
+(define (work x)
+  (+ x $(sum-to 100)))      ; $-marked: fold (sum-to 100) at preprocess time
+
+(define (loop n acc)
+  (if (= n 0) acc
+      (loop (- n 1) (+ acc (work n)))))
+
+(loop 1000 0)</code></pre>
+
+<p>After preproc:</p>
+
+<pre><code class="language-scheme">(define (sum-to n) (if (= n 0) 0 (+ n (sum-to (- n 1)))))
+(define (work x) (+ x 5050))       ; folded
+(define (loop n acc) (if (= n 0) acc (loop (- n 1) (+ acc (work n)))))
+(loop 1000 0)</code></pre>
+
+<p><code>(sum-to 100)</code> is evaluated once at preprocess time, by a small in-host evaluator with a 200K-reduction fuel cap, and the result <code>5050</code> is substituted into the AST. The engines never see the <code>$</code>; they receive plain wallisp source. Both versions of the program produce <code>5550500</code>.</p>
+
+<table>
+  <thead>
+    <tr><th>engine</th><th class="num">unmarked</th><th class="num">folded</th><th class="num">speedup</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>tree-walker (<code>lisp_big</code>)</td><td class="num">18.52 ms</td><td class="num">0.269 ms</td><td class="num"><strong>68.9&times;</strong></td></tr>
+    <tr><td><code>bytecode_gc</code></td><td class="num">4.94 ms</td><td class="num">0.083 ms</td><td class="num"><strong>59.9&times;</strong></td></tr>
+  </tbody>
+  <figcaption>The <em>unmarked</em> program is the same Lisp with <code>$</code> removed &mdash; the version the engine would run if there were no preproc step. <em>folded</em> is the preproc output. Both produce 5550500.</figcaption>
+</table>
+
+<div class="callout">
+  <p><strong>This 60&times; is <em>not</em> a general PE claim.</strong> It&rsquo;s the reuse factor of this benchmark. The demo deliberately calls <code>(work x)</code> 1000 times in a loop; each call would have done a 100-step <code>sum-to</code> recursion. Used once at top level, <code>$(sum-to 100)</code> saves one sum-to&rsquo;s worth of runtime &mdash; invisible.</p>
+</div>
+
+<p>The honest expression of the win is <code>runtime_uses_of_($-fold_result) &times; cost_per_evaluation</code>. The 60&times; is a knob you turn by structuring the program around reuse. H9&rsquo;s 50&times;, by contrast, is structural: collapsing the eval loop benefits every program because every program runs through it.</p>
+
+<h3>Hard-fail by design</h3>
+
+<p><code>$E</code> is a <em>promise</em>: it folds, period. If folding fails &mdash; unbound symbol, unknown function, fuel exhausted, unsupported construct &mdash; preproc prints a diagnostic and exits non-zero. No soft fall-through to runtime.</p>
+
+<pre><code>$ echo '(define (f x) $(+ x 1))' | preproc
+preproc: $-fold: unbound symbol `x`
+exit: 1
+
+$ echo '(define (f x) $(no-such-fn 1 2))' | preproc
+preproc: $-fold: unknown function `no-such-fn`
+exit: 1</code></pre>
+
+<p>This was a design call. The alternative &mdash; soft-fail, where an un-foldable <code>$E</code> silently strips the marker and runs at runtime &mdash; is friendlier but introduces a silent performance cliff. The user thinks they&rsquo;re getting compile-time work; they&rsquo;re not. Hard-fail catches the most common comptime bug (passing a runtime value into a comptime slot), makes <code>$E</code> mean something definite, and is actually simpler to implement: "try to fold, error on failure" rather than "distinguish graceful unfold from a real bug."</p>
+
+<p>Convergent signal: <code>barrier()</code> in the comptime specializer drop that prompted this whole thread, Zig&rsquo;s <code>comptime</code> keyword, and C++ <code>constexpr</code> all chose hard-fail. Different languages, same call.</p>
+
+<h3>Dev affordance: <code>--trace</code></h3>
+
+<p>Treated as a debug utility, the preprocessor benefits from a trace mode. <code>preproc --trace</code> writes one line per fold to stderr; stdout is unchanged.</p>
+
+<pre><code>$ preproc --trace &lt; comptime_demo.lisp &gt; folded.lisp
+$(sum-to 100) =&gt; 5050</code></pre>
+
+<p>Combined with <code>diff folded.lisp original.lisp</code>, this tells you both what changed in the source and <em>why</em>. A plain source diff doesn&rsquo;t carry the &ldquo;why.&rdquo;</p>
+
+</details>
+
+<details>
+<summary><h2><span class="section-num">4</span>Same theory, two surfaces</h2></summary>
+
+<p>H9 and H10 are both Futamura projection #1 &mdash; specialize the interpreter against a source program &mdash; but they make opposite choices about where the residual lands.</p>
+
+<table>
+  <thead>
+    <tr><th>axis</th><th>H9 (Lisp&rarr;C&rarr;wasm)</th><th>H10 (Lisp&rarr;Lisp)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>target</td><td>C residual, compile to wasm</td><td>folded Lisp source</td></tr>
+    <tr><td>substrate</td><td>leaves Lisp entirely</td><td>stays on existing engines</td></tr>
+    <tr><td>toolchain added</td><td>spec + clang + wasm-ld</td><td>spec, one pipe</td></tr>
+    <tr><td>win source</td><td>eval loop removed</td><td>partial subexpression folded</td></tr>
+    <tr><td>win generality</td><td>structural, every program</td><td>conditional on reuse</td></tr>
+    <tr><td>win magnitude</td><td>50&ndash;65&times;</td><td>60&ndash;69&times; (demo-shaped)</td></tr>
+    <tr><td>engineering</td><td>~280 LOC + new toolchain</td><td>~340 LOC, no toolchain</td></tr>
+    <tr><td>programmer effort</td><td>none</td><td>mark sites with <code>$</code></td></tr>
+  </tbody>
+</table>
+
+<p>These are <em>complementary</em>, not competitive. H9 is "your whole program is comptime-known &mdash; ship a residual binary." H10 is "parts of your program are comptime-known &mdash; fold them, run the rest normally on the engines you already have."</p>
+
+<p>The magnitudes happen to be in the same neighborhood because both demos are constructed to make PE look good. The mechanisms are different:</p>
+
+<ul>
+  <li>H9&rsquo;s 50&times; is the <em>per-call</em> opcode count of the bytecode VM, multiplied by the call count of the program. Every program pays this. Removing the eval loop benefits every program equally.</li>
+  <li>H10&rsquo;s 60&times; is the <em>reuse factor</em> of the folded subexpression. A program that doesn&rsquo;t reuse the result of any <code>$E</code> sees nothing. A program that reuses it in a hot loop sees linear-in-iterations savings.</li>
+</ul>
+
+<p>One way to think about the relationship: H10 is "what wins fit inside Lisp." H9 is "what wins fit outside Lisp." On the demos we picked, both pay around 60&times;. On a program where the whole computation could be folded, H10 would be infinite (the program <em>is</em> the fold) and H9 would be irrelevant (nothing left to run). On a program where nothing is comptime-knowable, H10 would be 1&times; (nothing to fold) and H9 would still be 50&times; (the eval loop is gone regardless). The methods don&rsquo;t overlap; they cover different parts of the program-space.</p>
+
+</details>
+
+<details>
+<summary><h2><span class="section-num">5</span>What&rsquo;s open</h2></summary>
+
+<p>Three honest threads were left untouched on this pass.</p>
+
+<p><strong>Cons cells and closures.</strong> The H9 specializer and the H10 preproc both stop at fixnum-only programs &mdash; no <code>cons</code>, no closures-over-locals, no <code>let</code> or <code>cond</code> in the folded portion. Extending the folder to handle <code>cons/car/cdr</code> is mechanical and unlocks lookup-table programs. Closures need a representation in the host evaluator that tracks free-variable capture &mdash; bigger, and worth measuring whether the marginal complexity pays off on the metacircular evaluator (where most of the cost is closure dispatch).</p>
+
+<p><strong>Cross-runtime measurement.</strong> The 50&ndash;65&times; numbers are wasm-on-V8. Bun (JavaScriptCore) and the native build (no JIT) are easy follow-ons given existing harness infrastructure. JSC inlines wasm differently from V8; the gap may compress or widen. The main study has cross-runtime parity for the engines &mdash; the residuals should run through the same harness without changes.</p>
+
+<p><strong>Composition.</strong> Run H10 first to fold <code>$</code>-marks, then H9 to specialize the folded program to C. Untried. Plausibly noisy &mdash; H9 already removes the cost of the engine; H10 only matters if the engine is going to run the program. Putting them in series may give H9 a smaller program to chew on, which clang then optimizes better, but the speedup is probably indistinguishable from H9 alone on programs where H9 already wins big.</p>
+
+</details>
+
+</div>
+
+<footer>
+  <p>Companion to the main <a href="index.html">wallisp study</a>. Source, benchmarks, and the full empirical record &mdash; including the pre-registered predictions and the falsification logs for H9 and H10 &mdash; live in <code>FINDINGS.md</code> at the repo root.</p>
+  <p>The specializer (H9) is at <code>prototype/futamura/specialize.c</code>. The <code>$</code>-preprocessor (H10) is at <code>prototype/futamura/preproc.c</code>. Both build via <code>bash prototype/futamura/build.sh</code>; both have self-bootstrapping benches at <code>harness/bench_futamura.mjs</code> and <code>harness/bench_preproc.mjs</code>.</p>
+  <p>This thread was prompted by an external comptime-specializer code drop &mdash; the eval-or-emit pattern that organizes both H9 and H10 came from there. Wallisp&rsquo;s contribution is the application to a Lisp interpreter and the measurements.</p>
+</footer>
+
+</body>
+</html>
