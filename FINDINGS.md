@@ -2645,3 +2645,78 @@ Extension plan (not pursued in v1):
   specializer.
 - `harness/bench_preproc.mjs` — self-bootstrapping bench across
   `lisp_big.wasm` and `bytecode_gc.wasm`.
+
+## H9.B-v3 — Futamura cons-v1: comptime lists in the specializer (CONFIRMED, prediction badly low)
+
+Pre-registered prediction (2026-06-05, before measuring): on
+`nrev-50`, `bytecode_gc / residual` would be about **6x**. Rationale:
+H9's original 50x was structural eval-loop removal, while cons folding
+looked likely to pay some list materialization cost in the residual.
+
+Result: **falsified upward.** `nrev-50` measured **249.00x** for
+`bytecode_gc / residual` in `harness/bench_futamura.mjs`.
+
+| workload | tree-walker | bytecode_gc | residual gen | bytecode_gc / residual |
+|----------|-------------|-------------|--------------|-------------------------|
+| nrev-50  | 0.498 ms    | 0.176 ms    | 0.001 ms     | **249.00x**             |
+
+Mechanism: the v1 scope is comptime-only cons. For
+
+```
+(define (work) (lsum (nrev (iota 50))))
+```
+
+the entire `iota -> nrev -> lsum` list pipeline runs during
+specialization, and the residual is just:
+
+```
+static u32 work(){
+  return mkfix(1275);
+}
+```
+
+That means the residual does **not** materialize the list at runtime.
+My prediction assumed escaped list materialization would remain in the
+runtime path; this demo does not escape the list, only the final fixnum
+sum.
+
+### Implementation notes
+
+- `specialize.c` now has `SV_NIL` and `SV_CONS`, backed by a
+  comptime `ct_cons[]` pool parallel to the closure pool.
+- `eval_ct` folds `quote`, `cons`, `car`, `cdr`, `null?`, and `pair?`
+  when their inputs are comptime values.
+- Runtime `cons`, `car`, and `cdr` hard-fail with:
+  `specialize: runtime cons not yet supported (B-v3 v1 is comptime-only)`.
+- Escaped comptime cons trees emit a residual `static const Cell
+  ct_pool[]` plus `mkcons(index)` values using the same 30-bit tagged
+  representation as `engines/lisp.c`.
+- `EVAL_CT_FUEL` was raised from `10000` to `250000`; `nrev-50` needs
+  the larger cap because naive reverse builds a quadratic amount of
+  spec-time list structure.
+
+### Regression checks
+
+- `node harness/test_futamura_regressions.mjs`: pass.
+- `bash prototype/futamura/build.sh`: pass.
+- The five previous residual wasm files stayed byte-identical after
+  rebuild: fib, tak, closures_demo, closures_v2_demo,
+  closures_named_demo.
+- `prototype/futamura/build/residual_nrev_demo_gen.c` has
+  `work()` as a single `mkfix(1275)` return.
+
+### Caveats
+
+This is not runtime allocation support. Programs that need to allocate
+or walk fresh runtime lists still fail by design. B-v3 v1 proves the
+specializer can consume list-shaped comptime data; v2 would need a
+runtime arena and a more careful comptime/runtime value boundary.
+
+### Artifacts
+
+- `prototype/futamura/specialize.c` — comptime cons support.
+- `prototype/futamura/nrev_demo.lisp` — nrev+sum demo.
+- `prototype/futamura/build.sh` — builds `residual_nrev_demo_gen.wasm`.
+- `harness/test_futamura_regressions.mjs` — cons assertions and wasm
+  byte-identity guard.
+- `harness/bench_futamura.mjs` — `nrev-50` bench row.
