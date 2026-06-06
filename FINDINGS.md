@@ -2720,3 +2720,106 @@ runtime arena and a more careful comptime/runtime value boundary.
 - `harness/test_futamura_regressions.mjs` — cons assertions and wasm
   byte-identity guard.
 - `harness/bench_futamura.mjs` — `nrev-50` bench row.
+
+## H11 — branchless predicate primitives in `bytecode_gc.c` (FALSIFIED, wrong direction)
+
+Pre-registered 2026-06-06 (`docs/project_notes/h11_branchless_predicates_preregistration.md`).
+Motivated by a brief look at branchless quicksort — replacing `cond ? TRUE :
+NIL` ternary returns inside JIT-hot br_table arms with arithmetic
+`mkspec(SP_NIL + cond)` (exploiting `SP_T = SP_NIL + 1`). The pre-reg's null
+hypothesis was that V8 already lowers the ternary as well as the
+hand-rolled arithmetic — predicted band ±2% on every benchmark, with
+≥3% improvement OR ≥2% slowdown as falsification criteria.
+
+**Result: refuted, in the *opposite* direction from the falsification
+direction we were testing for.** The branchless arithmetic produces a small
+but real *pessimization* of ~3-5% on the two predicate/comparison-heavy
+benchmarks, with the other four hovering at the noise floor.
+
+### What was changed
+
+`engines/bytecode_gc.c` only. Three sites, six predicates each:
+
+1. `apply_prim` slow path: `PR_NULLP`, `PR_PAIRP`, `PR_LISTQ`, `PR_NUMBERP`,
+   `PR_SYMBOLP`, `PR_EQ`, `PR_LT`.
+2. `OP_CALL` 1-arg fast path: predicate arms.
+3. `OP_CALL` 2-arg fast path: `PR_EQ`, `PR_LT`. Same edits to the
+   `OP_TAILCALL` fast-path twins.
+
+Each `is_X(a) ? TRUE : NIL` became `mkspec(SP_NIL + is_X(a))`.
+
+### Benchmark
+
+`node harness/bench.mjs`, best-of-25 per run, 5 runs per condition, taking
+the min across runs. `bytecode_gc` column only — other engines act as
+controls (untouched).
+
+| benchmark      | baseline (ms) | branchless (ms) | ratio  | predicted band | verdict             |
+|----------------|---------------|-----------------|--------|----------------|---------------------|
+| fib(24)        | 7.584         | 7.782           | 1.026  | 0.99–1.01      | +2.6% (edge)        |
+| tak(18,12,6)   | 3.696         | 3.739           | 1.012  | 0.99–1.01      | +1.2% (noise)       |
+| ack(3,4)       | 0.575         | 0.591           | 1.028  | 0.99–1.01      | +2.8% (edge)        |
+| nrev+sum(150)  | 0.791         | 0.824           | 1.042  | 0.98–1.02      | **+4.2% slower**    |
+| tailsum(30000) | 1.646         | 1.708           | 1.038  | 0.99–1.01      | **+3.8% slower**    |
+| meta-fib(12)   | 3.457         | 3.462           | 1.001  | 0.97–1.02      | noise               |
+
+Sanity on noise: baseline `nrev+sum` clustered at 0.79ms across 4 of 5
+runs (one 0.82 outlier); post-change clustered at 0.82-0.85ms — a real
+cluster shift, not single-run jitter. `tailsum` shows the same shape:
+baseline cluster 1.65ms, post-change 1.71ms. Other engine columns were
+unchanged across both conditions, ruling out machine-wide drift as the
+explanation.
+
+The two slowed benchmarks are exactly the two with the densest
+predicate/comparison hot loop: `tailsum`'s tight `(= i 0)` recursion and
+`nrev+sum`'s `null?`/`car`/`cdr` walk. The benchmarks dominated by
+arithmetic recursion (fib, tak) or by allocation (meta-fib) moved less,
+matching where the rewritten ternaries sit on the hot path.
+
+Result cross-check via the bench harness's all-engines-agree assertion:
+no DISAGREE flags across either condition. Semantics preserved.
+
+### What happened to V8 specialisation
+
+The pre-reg's mechanism model assumed `cond ? TRUE : NIL` and
+`mkspec(SP_NIL + cond)` would lower to identical native code. The
+measurement says the ternary is *strictly cleaner* for the wasm/V8
+pipeline:
+
+1. `cond ? TRUE : NIL` lowers to wasm `select` with two immediate
+   constants (3 and 7 — the tag-encoded NIL and TRUE values). V8 emits a
+   conditional move or branchless select with the constants already in
+   the instruction stream. One native op, no arithmetic.
+2. `mkspec(SP_NIL + cond)` forces an actual `(cond << 2) | 3` —
+   shift+or that has to compute at runtime. The `cond` itself was
+   already 0/1 from the comparison, so the compiler can't const-fold
+   past it. Two native ops where there was one.
+
+The blqsort trick assumed an L1-pressured loop where branch
+mispredictions dominated the cost. Our case wasn't that — it was a
+JIT-hot select-of-two-constants where the comparison value was already
+free and the "branch" had already been eliminated. Substituting
+arithmetic for the select traded a cheap thing for a slightly
+less-cheap thing.
+
+### What this tells us
+
+- **V8's wasm SELECT lowering can be better than hand-rolled arithmetic
+  when both target constants are small.** This is consistent with the
+  prior finding that V8 hard-specialises the LOADG-OF-CONSTANT path
+  (`docs/project_notes/bytecode_disasm.md:75-78`) — the same kind of
+  constant-aware specialisation extends to predicate returns inside
+  br_table arms.
+- The branchless-arithmetic technique pays where the alternative is
+  branch misprediction. It can *hurt* where the alternative is already a
+  branchless select. Same intuition the blqsort author had — "for
+  trivially copyable types branch mispredictions are far costlier than
+  doubled copies" — runs the other way when the operands aren't
+  L1-pressured arrays but cheap immediate constants.
+- For wallisp specifically: the `cond ? TRUE : NIL` pattern is *good* C
+  source. No reason to "branchless-ify" it anywhere else in the
+  codebase.
+
+Edits reverted. Pre-reg note preserved at
+`docs/project_notes/h11_branchless_predicates_preregistration.md` as
+the record of the experiment.
