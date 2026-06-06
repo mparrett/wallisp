@@ -247,6 +247,26 @@ footer {
 
 footer p { margin-bottom: 0.5rem; }
 footer a { color: var(--ink-soft); border-bottom-color: var(--border); }
+
+/* Mobile tightening — applied below iPhone-portrait widths. Smaller body
+   font, tighter wrap/hero spacing, less-shouty h1, compact code chips and
+   table cells. Matches the same block in docs/index.html. */
+@media (max-width: 480px) {
+  body { font-size: 16px; line-height: 1.6; }
+  .wrap { padding: 2.5rem 1.25rem 4rem; }
+  header.hero { margin-bottom: 2.5rem; }
+  h1 { font-size: 1.85rem; }
+  header.hero .lede { font-size: 1.05rem; }
+  h2 { font-size: 1.35rem; margin-top: 2.5rem; }
+  summary > h2 { font-size: 1.2rem; }
+  summary { padding: 1rem 0; }
+  details[open] { padding-bottom: 1.75rem; }
+  pre { font-size: 12.5px; padding: 0.75rem 0.9rem; }
+  code { padding: 0.05em 0.25em; font-size: 0.88em; }
+  table { font-size: 0.88rem; }
+  th, td { padding: 0.45rem 0.55rem; }
+  footer { padding: 1.5rem 1.25rem 0; margin-top: 3.5rem; }
+}
 </style>
 </head>
 
