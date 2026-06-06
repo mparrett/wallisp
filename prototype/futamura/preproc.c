@@ -305,6 +305,9 @@ static u32 rewrite(u32 expr){
     }
     return result;
   }
+  if(sym_eq_str(car(expr), "quote")){
+    return expr;
+  }
   // Otherwise: rebuild the list with each element rewritten.
   u32 first = NIL, last = NIL;
   for(u32 p = expr; is_cons(p); p = cdr(p)){

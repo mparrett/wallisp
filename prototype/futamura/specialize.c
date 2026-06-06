@@ -146,10 +146,18 @@ static int nfns = 0;
 // captured-env). At beta-reduce time we restore the captured env on top of
 // the current one, then push fresh param bindings.
 typedef enum { BV_FIX, BV_RUNTIME, BV_LAMBDA } BVKind;
-typedef struct { u32 name; BVKind k; i32 fix; int lam_idx; } Binding;
+typedef struct {
+  u32 name;
+  BVKind k;
+  i32 fix;
+  int lam_idx;
+  int runtime_id;
+} Binding;
 #define ENV_MAX 128
 static Binding env_stack[ENV_MAX];
 static int env_top = 0;
+static int next_runtime_id = 1;
+static int current_emit_fn = -1;
 
 #define CAP_MAX 32
 typedef struct {
@@ -188,6 +196,12 @@ static int env_lookup(u32 sym, Binding *out){
   return 0;
 }
 
+static int runtime_binding_is_active(int runtime_id){
+  for(int i = env_top - 1; i >= 0; i--)
+    if(env_stack[i].k == BV_RUNTIME && env_stack[i].runtime_id == runtime_id) return 1;
+  return 0;
+}
+
 static int make_closure(u32 params, u32 body){
   if(n_closures >= CLOSURES_MAX){ fprintf(stderr, "specialize: too many closures\n"); exit(1); }
   if(env_top > CAP_MAX){ fprintf(stderr, "specialize: closure capture too large (%d)\n", env_top); exit(1); }
@@ -200,11 +214,30 @@ static int make_closure(u32 params, u32 body){
 
 // Push an SVal as a Binding (for closure params / let RHSs).
 static void push_binding(u32 name, SVal v){
+  if(env_top >= ENV_MAX){ fprintf(stderr, "specialize: env_stack overflow\n"); exit(1); }
   Binding b = { name,
                 v.k == SV_FIX ? BV_FIX : (v.k == SV_LAMBDA ? BV_LAMBDA : BV_RUNTIME),
                 v.k == SV_FIX ? v.fix : 0,
-                v.k == SV_LAMBDA ? v.lam_idx : 0 };
+                v.k == SV_LAMBDA ? v.lam_idx : 0,
+                -1 };
   env_stack[env_top++] = b;
+}
+
+static void push_runtime_binding(u32 name){
+  if(env_top >= ENV_MAX){ fprintf(stderr, "specialize: env_stack overflow\n"); exit(1); }
+  Binding b = {name, BV_RUNTIME, 0, 0, next_runtime_id++};
+  env_stack[env_top++] = b;
+}
+
+static void check_closure_runtime_captures(Closure *c){
+  for(int i = 0; i < c->n_cap; i++){
+    Binding *b = &c->cap[i];
+    if(b->k != BV_RUNTIME) continue;
+    if(current_emit_fn < 0 || b->runtime_id < 0 || !runtime_binding_is_active(b->runtime_id)){
+      fprintf(stderr, "specialize: closure captured runtime binding `%s` after its C scope ended\n", symstr(b->name));
+      exit(1);
+    }
+  }
 }
 
 // C-mangle a Lisp identifier char: replace `-`, `?`, `!` with `_`.
@@ -277,6 +310,44 @@ static CompDef* find_comp_def(u32 sym){
   for(int k = 0; k < n_comp_defs; k++)
     if(sym_matches_mangled(sym, comp_defs[k].name)) return &comp_defs[k];
   return NULL;
+}
+
+static void reject_mangled_top_level_collision(u32 sym){
+  for(int k = 0; k < nfns; k++){
+    if(sym_matches_mangled(sym, fns[k].name)){
+      fprintf(stderr, "specialize: top-level name `%s` collides with an existing C identifier after mangling\n", symstr(sym));
+      exit(1);
+    }
+  }
+  for(int k = 0; k < n_comp_defs; k++){
+    if(sym_matches_mangled(sym, comp_defs[k].name)){
+      fprintf(stderr, "specialize: top-level name `%s` collides with an existing C identifier after mangling\n", symstr(sym));
+      exit(1);
+    }
+  }
+}
+
+static int expr_can_yield_closure(u32 node){
+  if(is_sym(node)){
+    CompDef *cd = find_comp_def(node);
+    return cd && cd->v.k == SV_LAMBDA;
+  }
+  if(!is_cons(node)) return 0;
+
+  u32 head = car(node), args = cdr(node);
+  if(sym_eq(head, "lambda")) return 1;
+  if(sym_eq(head, "if")){
+    u32 t = car(cdr(args)), e = car(cdr(cdr(args)));
+    return expr_can_yield_closure(t) || expr_can_yield_closure(e);
+  }
+  if(sym_eq(head, "let")){
+    return expr_can_yield_closure(car(cdr(args)));
+  }
+  if(is_sym(head)){
+    Fn *f = find_define(head);
+    return f && f->comptime_only;
+  }
+  return 0;
 }
 
 // Try to evaluate `node` to a comptime SVal (fixnum or closure) using the
@@ -442,11 +513,14 @@ static void bind_and_emit_body(FILE *out, u32 params, u32 rhs_list, u32 body){
       if(v.k == SV_FIX || v.k == SV_LAMBDA){
         push_binding(name, v);
       } else {
+        if(expr_can_yield_closure(rhs)){
+          fprintf(stderr, "specialize: closure-valued let binding `%s` depends on runtime data\n", symstr(name));
+          exit(1);
+        }
         fprintf(out, " u32 %s = ", symstr(name));
         emit_expr(out, rhs);
         fputs(";", out);
-        Binding b = {name, BV_RUNTIME, 0, 0};
-        env_stack[env_top++] = b;
+        push_runtime_binding(name);
       }
       pushed++;
     }
@@ -464,6 +538,7 @@ static void bind_and_emit_body(FILE *out, u32 params, u32 rhs_list, u32 body){
 // binding (which may have a mix of comptime and runtime args).
 static void beta_reduce_emit(FILE *out, Closure *c, u32 args){
   int saved = env_top;
+  check_closure_runtime_captures(c);
   for(int i = 0; i < c->n_cap; i++){
     if(env_top >= ENV_MAX){ fprintf(stderr, "specialize: env_stack overflow\n"); exit(1); }
     env_stack[env_top++] = c->cap[i];
@@ -513,6 +588,11 @@ static void emit_expr(FILE *out, u32 node){
     exit(1);
   }
   u32 head = car(node), args = cdr(node);
+
+  if(sym_eq(head, "lambda")){
+    fprintf(stderr, "specialize: lambda escaped to a runtime value position\n");
+    exit(1);
+  }
 
   // (if c t e)
   if(sym_eq(head, "if")){
@@ -585,6 +665,11 @@ static void emit_expr(FILE *out, u32 node){
     eval_ct_fuel = EVAL_CT_FUEL;
     SVal v = eval_ct(node);
     if(v.k == SV_FIX){ fprintf(out, "mkfix(%d)", v.fix); return; }
+    Fn *f = find_define(head);
+    if(f && f->comptime_only){
+      fprintf(stderr, "specialize: comptime-only closure-valued function `%s` called with runtime arguments\n", symstr(head));
+      exit(1);
+    }
     // Runtime call.
     fputs(symstr(head), out);
     fputc('(', out);
@@ -605,6 +690,13 @@ static void emit_expr(FILE *out, u32 node){
   if(hv.k == SV_LAMBDA){
     beta_reduce_emit(out, &closures[hv.lam_idx], args);
     return;
+  }
+  if(is_cons(head) && is_sym(car(head))){
+    Fn *f = find_define(car(head));
+    if(f && f->comptime_only){
+      fprintf(stderr, "specialize: comptime-only closure-valued function `%s` called with runtime arguments\n", symstr(car(head)));
+      exit(1);
+    }
   }
 
   fprintf(stderr, "specialize: unsupported expression head (not a symbol, lambda, or comptime closure)\n");
@@ -628,12 +720,14 @@ static void record_define(u32 form){
 
   if(is_cons(head)){
     // (define (NAME ARGS...) BODY)
+    reject_mangled_top_level_collision(car(head));
     Fn *f = &fns[nfns++];
     f->name = name_of(car(head));
     f->arity = 0;
     for(u32 p = cdr(head); is_cons(p); p = cdr(p)) f->params[f->arity++] = car(p);
     f->body = car(rest);
-    f->comptime_only = is_cons(f->body) && sym_eq(car(f->body), "lambda");
+    f->comptime_only = 0;
+    f->comptime_only = expr_can_yield_closure(f->body);
     return;
   }
 
@@ -646,17 +740,20 @@ static void record_define(u32 form){
 
   if(is_cons(val_expr) && sym_eq(car(val_expr), "lambda")){
     // (define NAME (lambda (ARGS) BODY))
+    reject_mangled_top_level_collision(head);
     Fn *f = &fns[nfns++];
     f->name = name_of(head);
     u32 params = car(cdr(val_expr));
     f->arity = 0;
     for(u32 p = params; is_cons(p); p = cdr(p)) f->params[f->arity++] = car(p);
     f->body = car(cdr(cdr(val_expr)));
-    f->comptime_only = is_cons(f->body) && sym_eq(car(f->body), "lambda");
+    f->comptime_only = 0;
+    f->comptime_only = expr_can_yield_closure(f->body);
     return;
   }
 
   // (define NAME EXPR) — comptime value binding.
+  reject_mangled_top_level_collision(head);
   eval_ct_fuel = EVAL_CT_FUEL;
   SVal v = eval_ct(val_expr);
   if(v.k == SV_FAIL){
@@ -704,7 +801,12 @@ static void emit_residual(FILE *out){
       fprintf(out, "u32 %s", symstr(f->params[j]));
     }
     fputs("){\n  return ", out);
+    int saved = env_top;
+    current_emit_fn = i;
+    for(int j = 0; j < f->arity; j++) push_runtime_binding(f->params[j]);
     emit_expr(out, f->body);
+    env_top = saved;
+    current_emit_fn = -1;
     fputs(";\n}\n\n", out);
   }
 
