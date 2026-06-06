@@ -25,6 +25,7 @@ const NEEDED = ['residual_fib_gen.wasm', 'residual_tak_gen.wasm',
                 'residual_closures_demo_gen.wasm',
                 'residual_closures_v2_demo_gen.wasm',
                 'residual_closures_named_demo_gen.wasm',
+                'residual_nrev_demo_gen.wasm',
                 'residual_fib_untagged.wasm', 'residual_tak_untagged.wasm'];
 const missing = NEEDED.filter(f => !fs.existsSync(path.join(ROOT, f)));
 if (missing.length) {
@@ -84,6 +85,16 @@ const CLOSURES_NAMED_SRC = `(begin
   (loop 1000 0))`;
 const CLOSURES_NAMED_IN = '1000 0';
 const CLOSURES_NAMED_EXPECTED = '505500';
+
+const NREV_SRC = `(begin
+  (define (iota n) (if (= n 0) '() (cons n (iota (- n 1)))))
+  (define (append a b) (if (null? a) b (cons (car a) (append (cdr a) b))))
+  (define (nrev l) (if (null? l) '() (append (nrev (cdr l)) (cons (car l) '()))))
+  (define (lsum l) (if (null? l) 0 (+ (car l) (lsum (cdr l)))))
+  (define (work) (lsum (nrev (iota 50))))
+  (work))`;
+const NREV_IN = '';
+const NREV_EXPECTED = '1275';
 
 async function load(file) {
   const bytes = fs.readFileSync(new URL('../' + file, import.meta.url));
@@ -158,6 +169,15 @@ const BENCHMARKS = [
       ['tree-walker (lisp)',          'lisp_big.wasm',                          CLOSURES_NAMED_SRC],
       ['bytecode_gc',                 'bytecode_gc.wasm',                       CLOSURES_NAMED_SRC],
       ['residual (specialize → gen)', 'residual_closures_named_demo_gen.wasm',  CLOSURES_NAMED_IN],
+    ],
+  },
+  {
+    name: 'nrev-50',
+    expected: NREV_EXPECTED,
+    rows: [
+      ['tree-walker (lisp)',          'lisp_big.wasm',                 NREV_SRC],
+      ['bytecode_gc',                 'bytecode_gc.wasm',              NREV_SRC],
+      ['residual (specialize → gen)', 'residual_nrev_demo_gen.wasm',   NREV_IN],
     ],
   },
 ];

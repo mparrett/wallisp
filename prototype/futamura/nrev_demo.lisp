@@ -1,0 +1,5 @@
+(define (iota n) (if (= n 0) '() (cons n (iota (- n 1)))))
+(define (append a b) (if (null? a) b (cons (car a) (append (cdr a) b))))
+(define (nrev l) (if (null? l) '() (append (nrev (cdr l)) (cons (car l) '()))))
+(define (lsum l) (if (null? l) 0 (+ (car l) (lsum (cdr l)))))
+(define (work) (lsum (nrev (iota 50))))
