@@ -45,10 +45,14 @@ These live outside `examples/` because they have other roles too:
   pattern (constant folding, closure inlining, etc.). Read them for the
   specialization story, not as general examples.
 
-## What wallisp doesn't have
+## What wallisp has
 
 Integers (30-bit fixnum), cons cells, symbols, lambdas/closures, and
 the special forms `quote`, `if`, `define`, `lambda`, `let`, `begin`,
-`cond`, `set!`. No strings (except in `bytecode_gc` via EXP1, see
+`cond`, `set!`. Plus the f-call sugar in `engines/reader.h`.
+
+## What wallisp doesn't have
+
+No strings (except in `bytecode_gc` via EXP1, see
 `engines/bytecode_gc.c`), no floats, no vectors, no hash tables, no
 modules. The point is the engine ladder, not the language surface.
