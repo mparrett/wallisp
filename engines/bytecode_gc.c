@@ -166,35 +166,10 @@ static u32 alloc_string(const u8* src, u32 len){
   return wrapper;
 }
 
-// ---- reader (identical) ----------------------------------------------------
-static const char*rp; static const char*rend;
-static void skipws(){
-  while(rp<rend){ char c=*rp;
-    if(c==' '||c=='\t'||c=='\n'||c=='\r')rp++;
-    else if(c==';'){ while(rp<rend&&*rp!='\n')rp++; }
-    else break; }
-}
-static int is_delim(char c){ return c==' '||c=='\t'||c=='\n'||c=='\r'||c=='('||c==')'||c==';'||c==0; }
-static u32 read_expr();
-static u32 read_list(){
-  u32 first=NIL,last=NIL;
-  for(;;){ skipws();
-    if(rp>=rend) return first;
-    if(*rp==')'){ rp++; return first; }
-    u32 e=read_expr(); u32 link=cons(e,NIL); if(link==ERR)return ERR;
-    if(is_nil(first)){first=link;last=link;} else {cells[considx(last)].cdr=link;last=link;}
-  }
-}
-static u32 read_atom(){
-  const char*start=rp; while(rp<rend&&!is_delim(*rp))rp++;
-  u32 len=(u32)(rp-start);
-  int neg=0; const char*p=start; u32 n=len;
-  if(n>0&&(*p=='-'||*p=='+')){neg=(*p=='-');p++;n--;}
-  if(n>0){ int isnum=1; i32 val=0;
-    for(u32 i=0;i<n;i++){char c=p[i]; if(c<'0'||c>'9'){isnum=0;break;} val=val*10+(c-'0');}
-    if(isnum) return mkfix(neg?-val:val); }
-  return intern(start,len);
-}
+// ---- reader (shared + strings hook) ----------------------------------------
+#define READER_HAS_STRINGS
+#include "reader.h"
+
 // EXP1: string literal "...". Backslash-escape: \" \\ \n \t.
 // Writes directly into strheap (skipping the alloc_string intermediate copy
 // since we don't have the length up front). Compile-phase only; gc isn't
@@ -223,14 +198,6 @@ static u32 read_string(){
   u32 wrapper = cons(s_string, mkfix((i32)off));
   g_pending_str_off = STR_NONE;
   return wrapper;
-}
-static u32 read_expr(){
-  skipws(); if(rp>=rend) return ERR;
-  char c=*rp;
-  if(c=='('){rp++; return read_list();}
-  if(c=='\''){rp++; u32 e=read_expr(); return cons(s_quote,cons(e,NIL));}
-  if(c=='"'){ return read_string(); }
-  return read_atom();
 }
 
 // ---- primitives (PR1: validated; see engines/lisp.c for the design notes) --
