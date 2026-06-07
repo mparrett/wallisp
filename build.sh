@@ -39,7 +39,7 @@ echo "  -> bc_base.wasm bc_inline.wasm bc_super.wasm"
 # on heavy benchmarks (fib(24) wants ~1.8M cells), so bench needs roomy builds.
 echo "bench variants (16M-cell arenas):"
 BIGMEM="-Wl,--initial-memory=268435456"   # 256 MB (CEK allocates most; large arenas keep all 3 engines comparable)
-mkbig () { sed 's/define MAX_CELLS.*/define MAX_CELLS 16000000/' "$1" > /tmp/_big.c; clang $FLAGS $BIGMEM $3 -O2 -o "$2" /tmp/_big.c; }
+mkbig () { sed 's/define MAX_CELLS.*/define MAX_CELLS 16000000/' "$1" > /tmp/_big.c; clang $FLAGS $BIGMEM $3 -O2 -Iengines -o "$2" /tmp/_big.c; }
 mkbig engines/lisp.c            lisp_big.wasm
 mkbig engines/lisp_trampoline.c lisp_trampoline_big.wasm  # for direct A/B vs lisp_big at matching arena
 mkbig engines/lisp_region.c     lisp_region_big.wasm

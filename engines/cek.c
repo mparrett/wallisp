@@ -97,64 +97,8 @@ static u32 intern(const char* s, u32 len){
 // cached symbols for special forms (filled in init)
 static u32 s_quote,s_if,s_define,s_lambda,s_let,s_begin,s_cond,s_else,s_setbang;
 
-// ---- reader ----------------------------------------------------------------
-// Hand-rolled recursive descent over a source buffer. Supports ints (with
-// leading '-'), symbols, lists, and 'quote shorthand. Good enough; no strings,
-// no dotted pairs, no #t literals (we expose nil/t as symbols bound in env).
-static const char* rp;
-static const char* rend;
-
-static void skipws(){
-  while(rp<rend){
-    char c=*rp;
-    if(c==' '||c=='\t'||c=='\n'||c=='\r'){rp++;}
-    else if(c==';'){ while(rp<rend && *rp!='\n') rp++; }
-    else break;
-  }
-}
-static int is_delim(char c){
-  return c==' '||c=='\t'||c=='\n'||c=='\r'||c=='('||c==')'||c==';'||c==0;
-}
-static u32 read_expr();
-
-static u32 read_list(){
-  u32 head=NIL, *tailp=&head; // we build via index since head may move? no—cons returns stable
-  // Build with explicit append using a sentinel approach:
-  u32 first=NIL; u32 last=NIL;
-  for(;;){
-    skipws();
-    if(rp>=rend) return first;            // tolerate missing ')'
-    if(*rp==')'){ rp++; return first; }
-    u32 e=read_expr();
-    u32 link=cons(e,NIL);
-    if(link==ERR) return ERR;
-    if(is_nil(first)){ first=link; last=link; }
-    else { cells[considx(last)].cdr=link; last=link; }
-  }
-  (void)tailp;
-}
-static u32 read_atom(){
-  const char* start=rp;
-  while(rp<rend && !is_delim(*rp)) rp++;
-  u32 len=(u32)(rp-start);
-  // integer?
-  int neg=0; const char* p=start; u32 n=len;
-  if(n>0 && (*p=='-'||*p=='+')){ neg=(*p=='-'); p++; n--; }
-  if(n>0){
-    int isnum=1; i32 val=0;
-    for(u32 i=0;i<n;i++){ char c=p[i]; if(c<'0'||c>'9'){isnum=0;break;} val=val*10+(c-'0'); }
-    if(isnum) return mkfix(neg?-val:val);
-  }
-  return intern(start,len);
-}
-static u32 read_expr(){
-  skipws();
-  if(rp>=rend) return ERR;
-  char c=*rp;
-  if(c=='('){ rp++; return read_list(); }
-  if(c=='\''){ rp++; u32 e=read_expr(); return cons(s_quote,cons(e,NIL)); }
-  return read_atom();
-}
+// ---- reader (shared) -------------------------------------------------------
+#include "reader.h"
 
 // ---- environment -----------------------------------------------------------
 // env is a list of frames; each frame is a list of (sym . val) cons cells.
