@@ -23,13 +23,13 @@ static const char* rend;
 static void skipws(){
   while(rp<rend){
     char c=*rp;
-    if(c==' '||c=='\t'||c=='\n'||c=='\r'){rp++;}
+    if(c==' '||c=='\t'||c=='\n'||c=='\r'||c==','){rp++;}
     else if(c==';'){ while(rp<rend && *rp!='\n') rp++; }
     else break;
   }
 }
 static int is_delim(char c){
-  return c==' '||c=='\t'||c=='\n'||c=='\r'||c=='('||c==')'||c==';'||c==0;
+  return c==' '||c=='\t'||c=='\n'||c=='\r'||c=='('||c==')'||c==','||c==';'||c==0;
 }
 static u32 read_expr();
 
@@ -73,5 +73,13 @@ static u32 read_expr(){
 #ifdef READER_HAS_STRINGS
   if(c=='"'){ return read_string(); }
 #endif
-  return read_atom();
+  u32 a=read_atom();
+  // f-call sugar: atom immediately followed by '(' with no whitespace
+  // reads as (atom args...). `fn (a b)` still parses as two siblings.
+  if(rp<rend && *rp=='('){
+    rp++;
+    u32 args=read_list();
+    return cons(a,args);
+  }
+  return a;
 }
