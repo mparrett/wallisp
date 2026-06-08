@@ -1,6 +1,10 @@
 # Shared reader extraction — plan
 
-**Drafted 2026-06-07.** Status: planned, not yet started.
+**Drafted 2026-06-07. Completed 2026-06-07.** All three phases landed:
+- Phase 1 — `3e3de3a` (Family A extraction)
+- Phase 2 — `24dae4f` (bytecode_gc strings hook)
+- Phase 3 — `7b8c495` (f-call sugar landed via shared reader.h; the
+  reader-sugar-fn-calls branch is now superseded and deleted)
 
 The reader (`skipws` / `is_delim` / `read_atom` / `read_list` / `read_expr`)
 currently lives inline in every engine source file. An audit (recorded

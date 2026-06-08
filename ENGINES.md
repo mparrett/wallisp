@@ -52,8 +52,9 @@ on prim-density-bound benchmarks.
 Bench builds use `_big.wasm` variants at 16M cells for the no-GC engines so
 they don't OOM on heavy benchmarks; the GC engines use their default arenas
 (262K) deliberately so collection is meaningful. Source lines are the engine
-file alone; the reader/printer/primitives are duplicated across files
-(intentional — keeps each engine a single TU and the A/B honest).
+file alone; the printer/primitives are still duplicated across files (each
+engine remains a single TU — keeps the A/B honest). The reader was shared
+into `engines/reader.h` via `#include` (see `docs/project_notes/shared_reader_plan.md`).
 
 ## Capabilities by architecture
 
