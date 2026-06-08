@@ -21,3 +21,26 @@ than what was committed.
 
 The bench-variant `*_big.wasm` files and prototype `bc_*.wasm` files are
 gitignored — those are pure build artifacts.
+
+## Interactive / I/O surface (current state)
+
+Baseline as of 2026-06-08, for the terminal/game roadmap
+(`terminal_game_roadmap.md`, ADR-003). Verified by grep across `engines/`,
+`standalone/`, `web/`, `harness/`:
+
+- **Host ABI is one-shot, stateless, zero-imports.** Write source into
+  `inbuf` → `eval_source(len)` → read printed result from `outbuf`.
+  `eval_source` calls `init()` **every call** — no persistent session.
+- **No input primitive.** Nothing reads a key/char mid-eval. The `stdin`
+  handling in `standalone/cli.mjs` / `harness/lisp-cli.mjs` only feeds *source*
+  to eval, not interactive input.
+- **No terminal surface.** No ANSI / cursor / tty primitives anywhere ("cursor"
+  hits in the tree are CSS and the compiler's code-emit pointer, not a
+  terminal cursor).
+- **No bitwise primitives** (`and`/`or`/`xor`/shifts). An LCG PRNG is
+  expressible (`* + mod`); xorshift/PCG are not.
+- **Web showcase evals once per click** (`web/template.html`,
+  `web/refresh-tiny-lisp-vm.sh`) — no session/history persistence.
+- **Strings exist only in `bytecode_gc`**, and its side-heap reclamation is
+  **incomplete** — that's why `standalone/` lifted strings out. This is the
+  named blocker (B4) for a per-frame-allocating game.

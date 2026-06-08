@@ -81,3 +81,57 @@ re-tail-call `eval_expr` (the GC variant roots the in-flight nested-if via
   and the arity check is a single integer compare at call entry.
 - Engine files grew 19–42 lines each (267 insertions across 8 engine .c
   files + the two harness files).
+
+## ADR-003: Path to an interactive terminal / TUI-game experience (2026-06-08)
+
+**Context**: A partner team (xsofy + let-go) dropped a pointer doc in
+`docs/project_incoming/tui-game-pointers-from-xsofy-letgo-2026-06-08.md` —
+lessons from shipping a TUI roguelike on a homegrown Lisp. It prompted the
+question: how far is wallisp from offering (a) a terminal REPL experience and
+(b) an xterm.js TUI game?
+
+The triage (full roadmap in `terminal_game_roadmap.md`) found the distance is
+governed by one fact: wallisp's host contract is **one-shot, stateless,
+zero-imports** — `eval_source` re-`init()`s every call, modules import nothing,
+and there is no input/terminal/bitwise surface. Zero-imports is currently
+**load-bearing to the project's identity** ("libraries, not commands", DEV.md).
+
+**Decision**: Treat the terminal/game track as an **explicit opt-in**, not
+default mission creep, and pin the approach so it doesn't drift:
+
+1. **Preserve zero-imports.** Drive everything through the two existing memory
+   buffers plus a **host-driven tick loop** (JS reads key → calls eval →
+   flushes `outbuf` to the terminal/xterm.js). The wasm emits ANSI into
+   `outbuf`; input bytes arrive via `inbuf`. No FFI.
+2. **Sidestep SharedArrayBuffer/COI.** Because no read blocks *inside* the
+   wasm, the partner doc's pointer #7 (SAB + cross-origin isolation +
+   `coi-serviceworker.js`) is unnecessary — that machinery only exists to
+   support blocking input in let-go's Go VM.
+3. **Critical path, in order:** persistent session (`eval_persistent` seam) →
+   `(read-key)` input prim → `(term/write)`/`(term/move-cursor)` streaming
+   output prim → fix `bytecode_gc`'s incomplete string-heap reclamation.
+4. **Sequence Milestone A (REPL) before B (game).** A is days and mostly host
+   glue; B is weeks, dominated by the string-reclamation work.
+
+**Alternatives considered**:
+- **Blocking input via SAB/COI** (the partner doc's recipe) — rejected; our
+  one-shot eval model makes it unnecessary, and it's the fiddliest part of
+  their stack.
+- **FFI / host imports for terminal I/O** — rejected; breaks the zero-imports
+  identity that the whole study rests on.
+- **Do nothing** — viable; this is a study repo, not a game repo. Left open in
+  the roadmap as "does wallisp want this surface at all, or does the track live
+  in a fork/downstream repo?" This ADR records *how* we'd do it if we choose
+  to, not a commitment to ship.
+
+**Consequences**:
+- A concrete, measure-don't-guess-compatible roadmap exists
+  (`terminal_game_roadmap.md`) with two milestones, gap lists, effort, and a
+  per-pointer triage of the partner doc.
+- The string-reclamation gap (B4) is now named as the single real blocker for
+  a game, separable from the small enabling seams (A1/B1–B3).
+- Current I/O-surface facts are pinned in `key_facts.md` so the "we have no
+  input/terminal/bitwise prims" baseline doesn't have to be re-derived.
+- Next concrete step when picked up: prototype Milestone A's `eval_persistent`
+  seam + a minimal Node REPL driver, to validate the session change is as small
+  as claimed.
