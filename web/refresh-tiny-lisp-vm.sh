@@ -31,6 +31,7 @@ build_one () {  # arena -> echo b64
   clang --target=wasm32 -nostdlib -fno-builtin -Oz \
     -Wl,--no-entry -Wl,--export-dynamic -Wl,--allow-undefined \
     -Wl,--initial-memory=33554432 \
+    -Iengines \
     -o "$W" "$C"
   echo "  $(wc -c < "$W") bytes wasm" >&2
   base64 -w0 "$W" 2>/dev/null || base64 -i "$W" | tr -d '\n'
