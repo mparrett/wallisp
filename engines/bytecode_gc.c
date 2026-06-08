@@ -764,11 +764,16 @@ char inbuf[INCAP];
 __attribute__((export_name("input_ptr"))) char* input_ptr(){ return inbuf; }
 __attribute__((export_name("output_ptr"))) char* output_ptr(){ return outbuf; }
 __attribute__((export_name("gc_count"))) unsigned gc_count(){ return g_numgc; }
-__attribute__((export_name("eval_source")))
-u32 eval_source(u32 len){
-  init();
-  rp=inbuf; rend=inbuf+(len<INCAP?len:INCAP);
-  outlen=0;
+// Compile + run the source currently staged in [rp,rend); print the result of
+// the last form, returning outbuf length. The caller has already set the
+// per-eval scratch (cp, outlen, g_cerr, g_oom, g_numgc, gc_enabled,
+// g_pending_str_off) and the read/out pointers. Shared by eval_source (fresh
+// VM each call) and eval_persistent (globals, symbols, arena, and string heap
+// survive across calls — see reset_session).
+static u32 run_buffer(){
+  u32 entry=cp;   // this eval's bytecode starts here (0 for eval_source; for a
+                  // persistent session it appends past earlier evals, so closures
+                  // defined on previous lines keep valid body pointers into code[])
   // Compile all top-level forms into one stream: f1 POP f2 POP ... fN HALT
   u32 first=1; int any=0;
   for(;;){
@@ -818,8 +823,39 @@ u32 eval_source(u32 len){
   return outlen;
 #else
   gc_enabled=1;            // compile done; collect during execution
-  u32 result=run(0);
+  u32 result=run(entry);
   print_val(result);
   return outlen;
 #endif
+}
+
+__attribute__((export_name("eval_source")))
+u32 eval_source(u32 len){
+  init();                                  // fresh VM: no state survives a call
+  rp=inbuf; rend=inbuf+(len<INCAP?len:INCAP);
+  outlen=0;
+  return run_buffer();
+}
+
+// ---- persistent session (Milestone A) --------------------------------------
+// eval_persistent keeps globals, interned symbols, the cons arena, and the
+// string heap across calls, so `(define x 5)` on one line is visible to a later
+// `(+ x 1)`. Only the per-eval scratch is reset here; run(0) already re-zeroes
+// the operand/call stacks and env on entry, so no session state leaks between
+// evals. The host calls reset_session() once to start (or clear) a session;
+// eval_persistent lazily inits on first use so a forgotten reset is still safe.
+static int g_session_started=0;
+__attribute__((export_name("reset_session")))
+void reset_session(){ init(); g_session_started=1; }
+__attribute__((export_name("eval_persistent")))
+u32 eval_persistent(u32 len){
+  if(!g_session_started){ init(); g_session_started=1; }
+  // Reset only per-eval scratch. Crucially NOT cp: closures defined on earlier
+  // lines hold body pointers into code[], so this eval appends rather than
+  // clobbering. code[] is bounded (emit sets g_cerr at CODE_MAX -> <error>);
+  // a long session eventually fills it — see the roadmap's known-limits note.
+  outlen=0; g_cerr=0; g_oom=0; g_numgc=0; gc_enabled=0;
+  g_pending_str_off=STR_NONE;              // clear per-eval transient string state
+  rp=inbuf; rend=inbuf+(len<INCAP?len:INCAP);
+  return run_buffer();
 }

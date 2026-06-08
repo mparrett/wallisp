@@ -35,18 +35,38 @@ surface, since zero-imports is load-bearing to its identity (that's the ADR).
 
 ## Milestone A — interactive REPL ("just a terminal experience")
 
-**Distance: close — days.** The web showcase already evals-in-browser; a real
-terminal REPL is mostly host-side glue (Node `readline`/tty → `eval_source` →
-print). One real engine gap:
+**Status: PROTOTYPED (2026-06-08).** Shipped in `bytecode_gc` + a Node REPL.
+Was close, as predicted — the engine seam is ~25 lines.
 
-- **A1. Persistent session.** Today `(define foo …)` evaporates on the next
-  call because `init()` resets the VM. Fix: an `eval_persistent` entry point
-  (or a `reset` flag) that skips re-init and keeps `g_env` + arena. Low risk,
-  small. Arena pressure across a long session is the thing to watch — the GC
-  build (`bytecode_gc`) is the right substrate.
+- **A1. Persistent session — DONE.** Added three additive exports to
+  `engines/bytecode_gc.c`: `reset_session()` (starts/clears a session),
+  `eval_persistent(len)` (keeps globals, interned symbols, the cons arena, and
+  the string heap across calls), and `eval_source` factored over a shared
+  `run_buffer()` helper but left behavior-identical. Globals already live in
+  `gval[]` (GC-rooted) and `run()` re-zeroes the operand/call stacks + env on
+  entry, so persistence was mostly about *not* calling `init()`.
+  - Driver: `harness/repl.mjs` (readline → `eval_persistent` → print; `:reset`).
+  - Test: `harness/test_session.mjs` (18 checks); existing `test_bc.mjs` 70/70
+    unchanged (eval_source untouched).
 
-That is the entire critical path for A. A weekend if we accept concat-history
-instead of true persistence; days for the real `eval_persistent` seam.
+**One non-obvious thing the prototype surfaced:** closures store a *code
+address* into the shared `code[]` buffer, so a naive "`cp=0` per call" reset
+clobbers the bytecode of closures defined on earlier lines → `(f 10)` after
+`(define (f ...) ...)` returns `<error>`. Fix: persistent mode *appends*
+bytecode (records an `entry` offset, `run(entry)`), never resets `cp`.
+
+**Known limits of the prototype (acceptable; revisit if a session gets long):**
+- `code[]` is bounded (`CODE_MAX` = 65536 words). Appending per line never
+  reclaims dead top-level code, so a very long session eventually fills it —
+  `emit` then sets `g_cerr` and evals return `<error>` (bounded, no
+  corruption). A bytecode compactor is out of scope.
+- **Don't interleave `eval_source` and `eval_persistent` on one instance** —
+  `eval_source` calls `init()` and wipes the session by contract. Pick one mode
+  per instance (the REPL only ever calls `eval_persistent`).
+- GC-during-compile risk (below) is unchanged.
+
+Remaining for a "real" Milestone A (beyond prototype): tty niceties
+(multi-line input, history, arena/`code[]` pressure surfaced to the user).
 
 ---
 

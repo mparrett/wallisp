@@ -162,6 +162,14 @@ output length, read the result string at `output_ptr()`. `bytecode_gc.wasm` also
 exports `gc_count()`; the `bc_base/inline/super` builds export `icount()`
 (instructions dispatched). `harness/lisp-cli.mjs` is a minimal driver.
 
+`bytecode_gc.wasm` additionally exports a **persistent-session** pair
+(Milestone A — see `docs/project_notes/terminal_game_roadmap.md`):
+`reset_session()` starts/clears a session and `eval_persistent(len)` evaluates
+while keeping globals, symbols, the cons arena, and the string heap across
+calls, so `(define x 5)` then `(+ x 1)` works across two calls. `eval_source`
+is unchanged (one-shot, re-inits every call); the two modes must not be mixed
+on one instance. Driver: `harness/repl.mjs`; contract test: `test_session.mjs`.
+
 ### Bytecode disassembly + wasm inspection
 
 Two views into "what is the VM actually executing," answering different
@@ -243,7 +251,7 @@ prototype/               bytecode optimization ladder (see prototype/README.md)
 wat/                     hand-editable WAT experiments
   probe.wat bc_edit.c bc_edit.wat bc_instr.wat
 harness/                 node drivers (also runs under Bun)
-  test_bc.mjs bench.mjs lisp-cli.mjs
+  test_bc.mjs bench.mjs lisp-cli.mjs repl.mjs test_session.mjs
 native/                  native build (no wasm, no JIT) — see "Native build" above
   bench.c main.c
 web/                     self-contained browser showcase
