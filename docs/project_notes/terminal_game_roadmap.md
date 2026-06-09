@@ -214,7 +214,6 @@ Milestone B — TUI game        (do A first)
   B4 strings: per-frame region reset (transient)       [engine, small]   done
      └ residual: mark-compactor for persistent churn   [engine, medium]  deferred
   B5 terminal host game-loop driver (harness/game.mjs) [host, medium]    done
-     └ xterm.js flavour (browser key events + write)   [host, medium]    todo
   B6 unbounded play: (input i) slots + rerun()         [engine, small]   done
      compile (tick) once, rerun per frame; no code[] growth (1e6 ticks ok)
 

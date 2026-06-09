@@ -39,6 +39,29 @@ still surface as bare `<error>`. The comparisons remain apples-to-apples
 on the shared core; don't mistake "agrees across engines" for "is a robust
 Scheme implementation."
 
+## Built on the finalist: a browser TUI game
+
+![wallisp coin-collector running in xterm.js in the browser](docs/coin2d-xterm.png)
+
+The finalist engine is real enough to host an interactive, real-time terminal
+game — in the browser, on the same zero-imports module. The loop is host-driven:
+a keypress pokes the action into the module's input slots, `rerun()` re-executes
+the once-compiled `(tick)`, and the frame it renders via `(display …)` is written
+to xterm.js. No SharedArrayBuffer, no cross-origin isolation — nothing blocks
+inside the wasm.
+
+```bash
+node harness/game.mjs                          # play in your terminal (raw TTY)
+printf 'dddddddsssq' | node harness/game.mjs   # or headless: replays keys, prints frames
+bash web/build-game.sh                         # regenerate web/game.html, then open it in a browser
+```
+
+The path there — persistent session, raw frame output, an O(1) per-frame string
+region-drop, and run-without-recompile for unbounded play — is recorded slice by
+slice in
+**[docs/project_notes/terminal_game_roadmap.md](docs/project_notes/terminal_game_roadmap.md)**
+(with ADRs 003–005 in `docs/project_notes/decisions.md`).
+
 ## Learn more
 
 - **[docs/index.html](docs/index.html)** — external write-up: the headline
