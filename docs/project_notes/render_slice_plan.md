@@ -1,6 +1,7 @@
-# Render slice — raw frame output for the persistent session (plan)
+# Render slice — raw frame output for the persistent session (plan + result)
 
-**Pre-registered 2026-06-08. Implementation pending.** Next engine slice on the
+**Pre-registered 2026-06-08. Implemented + measured same day — prediction
+CONFIRMED (see "Result" at the bottom).** Next engine slice on the
 terminal/game roadmap (`terminal_game_roadmap.md`, ADR-003), chosen over the
 roadmap's original B2 (`read-key`) because the game demo showed **input needs
 no engine primitive in the host-driven model** — the host owns the keyboard and
@@ -66,3 +67,45 @@ size. Falsified if reclamation already handles transient frame strings.
 ~15–30 lines engine (`display` prim + raw `outbuf` write), no host-loop change
 yet (turns still host-driven via `repl.mjs`). The interactive xterm.js loop
 (B5) stays downstream.
+
+## Result (2026-06-08) — prediction CONFIRMED
+
+Implemented `(display s)` in `bytecode_gc.c` (option 1): writes a string's bytes
+straight to `outbuf`, returns nil. `run_buffer` suppresses the value echo when a
+program produced output via `display` (so a frame isn't followed by `()`), but
+always surfaces `<error>`. Added a `strheap_used()` introspection export
+(sibling of `gc_count()`). `eval_source` byte-behaviour unchanged; existing
+`test_bc.mjs` 70/70 and `test_session.mjs` (now 24/24, +6 `display` checks)
+green; zero imports preserved.
+
+**Capability:** the coin game renders as a clean raw grid (`harness/render_probe.mjs`):
+
+```
+.@...o....
+..@..o....     @ = player, o = coin; collected at turn 5, respawns
+....@o....
+..o..@....
+```
+
+**Measurement** (drive frame-building turns via a recursive driver in one eval —
+flat via TCO — sampling `strheap_used`):
+
+| turns | strheap_used | bytes/turn | gc_count |
+|------:|-------------:|-----------:|---------:|
+| 1000  | 129,188      | ~128       | 0 |
+| 4000  | 513,188      | ~128       | 0 |
+| 8000  | 1,025,188    | ~128       | 0 |
+| ~8200 | **exhausted → `<error>`** | | 0 |
+
+Exactly as predicted: **monotonic ~128 bytes/turn, zero reclamation,
+`gc_count` never moves** (the collector resets strheap mark bits but frees
+nothing), exhausting the 1 MB heap at **~8,200 turns** for a *10-cell* frame.
+At a realistic frame size the per-frame cost is far higher (building a row with
+nested `string-append` is quadratic in width), so a full-screen render would
+exhaust in **hundreds of frames** — seconds of play.
+
+**Conclusion:** B4 (string-heap reclamation) is confirmed and quantified as the
+real blocker for a sustained TUI game. The render *capability* is done; the next
+engine work is a strheap reclamation strategy (free-list or compactor, or — for
+short-lived per-frame strings — a region/generation reset between frames). That
+is the next slice. Reproduce with `node harness/render_probe.mjs`.

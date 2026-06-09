@@ -119,14 +119,20 @@ for a real xorshift/PCG.
 - **B1. Persistent state across ticks** — same fix as A1. (engine, small)
 - **B2. Input primitive** — a `(read-key)` that reads host-fed bytes from a
   memory slot. New ABI + primitive. (engine, small–medium)
-- **B3. Streaming output** — `(term/write …)` / `(term/move-cursor …)` that
-  *append* ANSI to `outbuf` mid-eval, rather than one printed return value at
-  the end. New primitive; host flushes each tick. (engine, small–medium)
-- **B4. Strings with real reclamation — THE BLOCKER.** Only `bytecode_gc` has
-  strings, and its side-heap reclamation is **incomplete** (that's why
-  `standalone/` lifted them out). A game allocates strings every frame → the
-  known leak becomes fatal. Needs the free-list/compactor the standalone
-  README already flags. (engine, medium — this is the real work.)
+- **B3. Streaming output — DONE (render slice, 2026-06-08).** Added
+  `(display s)` to `bytecode_gc`: writes a string's bytes raw to `outbuf` (no
+  quotes/escapes, unlike `print_val`); `run_buffer` suppresses the value echo
+  when a program rendered via `display`. The coin game now renders as a clean
+  text grid (`harness/render_probe.mjs`). ANSI can be `string-append`-ed in or
+  emitted host-side — no extra primitive needed. Also added `strheap_used()`
+  introspection. See `render_slice_plan.md`.
+- **B4. Strings with real reclamation — THE BLOCKER (now quantified).** Only
+  `bytecode_gc` has strings and its side-heap is a pure bump pointer —
+  `gc()` resets mark bits but **frees nothing**. The render slice measured the
+  leak: **~128 bytes/turn, gc_count never moves, 1 MB exhausted in ~8,200
+  turns** for a 10-cell frame (hundreds of frames at realistic size). This is
+  now the next engine slice: a free-list/compactor, or — since frame strings
+  are short-lived — a per-frame region reset. (engine, medium — the real work.)
 - **B5. Host game-loop driver** in JS wiring xterm.js (input → eval → flush).
   (host, medium)
 

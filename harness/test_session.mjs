@@ -56,6 +56,15 @@ async function main() {
   check('redefine x', evl('eval_persistent', '(define x 100)'), 'x');
   check('f sees new x', evl('eval_persistent', '(f 2)'), '200');
 
+  // --- display: raw frame output (render slice) ---
+  ex.reset_session();
+  check('display raw, no quotes', evl('eval_persistent', '(display "hi")'), 'hi');
+  check('display suppresses value echo', evl('eval_persistent', '(begin (display "x") 42)'), 'x');
+  check('display newline passes through', evl('eval_persistent', '(display (string-append "a" "\\nb"))'), 'a\nb');
+  check('non-string display errors', evl('eval_persistent', '(display 5)'), '<error>');
+  check('plain value still echoes', evl('eval_persistent', '(+ 1 2)'), '3');
+  check('normal string still quoted', evl('eval_persistent', '(string-append "a" "b")'), '"ab"');
+
   // --- reset_session clears the session ---
   ex.reset_session();
   check('x gone after reset', evl('eval_persistent', 'x'), '<error>');

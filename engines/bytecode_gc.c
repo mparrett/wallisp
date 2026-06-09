@@ -47,6 +47,8 @@ enum { SP_NIL=0, SP_T, SP_ERR, SP_UNBOUND,
        PR_NULLP, PR_PAIRP, PR_LISTQ, PR_NUMBERP, PR_SYMBOLP, PR_SETCAR, PR_SETCDR,
        // EXP1: string primitives (bytecode_gc only; other engines leave these unbound)
        PR_STRINGP, PR_STRLEN, PR_STRREF, PR_STREQ, PR_STRAPPEND,
+       // Render slice: raw frame output (bytecode_gc only) — see render_slice_plan.md
+       PR_DISPLAY,
        SP_COUNT };
 #define NIL mkspec(SP_NIL)
 #define TRUE mkspec(SP_T)
@@ -210,6 +212,8 @@ static int fits_fix64(long long v){ return v >= FIX_MIN && v <= FIX_MAX; }
 // match: variadic +/-/* with n≥3, plus any prim invoked with a wrong arity.
 // The hot path (binary +/-/* /=/<, unary car/cdr/null?/pair?/list?) is
 // inlined and validated at the VM level — apply_prim is the slow path.
+static void oemit(char c);   // fwd decl: outbuf/oemit are defined with the printer
+
 static u32 apply_prim(u32 prim,u32 args){
   u32 id=prim>>2;
   if(!is_cons(args)) return ERR;
@@ -228,6 +232,12 @@ static u32 apply_prim(u32 prim,u32 args){
     // arithmetic — they share the `(!is_cons(d0)) return ERR;` arity gate).
     case PR_STRINGP: if(!is_nil(d0)) return ERR; return is_string(a) ? TRUE : NIL;
     case PR_STRLEN:  if(!is_nil(d0) || !is_string(a)) return ERR; return mkfix((i32)str_len(a));
+    // Render slice: write a string's bytes straight to outbuf (no quotes, no
+    // escaping), unlike print_val. Returns nil; the value echo is suppressed
+    // when a program produced output this way (see run_buffer).
+    case PR_DISPLAY: if(!is_nil(d0) || !is_string(a)) return ERR;
+      { u32 n=str_len(a); const u8* dat=str_data(a); for(u32 k=0;k<n;k++) oemit((char)dat[k]); }
+      return NIL;
   }
 
   if(!is_cons(d0)) return ERR;
@@ -717,6 +727,7 @@ static void init(){
   bindp("string-ref",    mkspec(PR_STRREF));
   bindp("string=?",      mkspec(PR_STREQ));
   bindp("string-append", mkspec(PR_STRAPPEND));
+  bindp("display",       mkspec(PR_DISPLAY));   // render slice
 }
 
 // ---- printer (identical) ---------------------------------------------------
@@ -764,6 +775,10 @@ char inbuf[INCAP];
 __attribute__((export_name("input_ptr"))) char* input_ptr(){ return inbuf; }
 __attribute__((export_name("output_ptr"))) char* output_ptr(){ return outbuf; }
 __attribute__((export_name("gc_count"))) unsigned gc_count(){ return g_numgc; }
+// Bytes used in the string heap. Monotonic — alloc_string only bumps; gc() does
+// not yet reclaim (see the strheap comment / render_slice_plan.md). Lets a host
+// watch the per-frame string leak the render slice exposes.
+__attribute__((export_name("strheap_used"))) unsigned strheap_used(){ return strheap_top; }
 // Compile + run the source currently staged in [rp,rend); print the result of
 // the last form, returning outbuf length. The caller has already set the
 // per-eval scratch (cp, outlen, g_cerr, g_oom, g_numgc, gc_enabled,
@@ -824,7 +839,9 @@ static u32 run_buffer(){
 #else
   gc_enabled=1;            // compile done; collect during execution
   u32 result=run(entry);
-  print_val(result);
+  // A program that produced output via (display ...) renders its own frame, so
+  // don't also echo the last form's value — except always surface an error.
+  if(outlen==0 || result==ERR) print_val(result);
   return outlen;
 #endif
 }

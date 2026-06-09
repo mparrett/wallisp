@@ -170,6 +170,14 @@ calls, so `(define x 5)` then `(+ x 1)` works across two calls. `eval_source`
 is unchanged (one-shot, re-inits every call); the two modes must not be mixed
 on one instance. Driver: `harness/repl.mjs`; contract test: `test_session.mjs`.
 
+For terminal rendering (Milestone B render slice) `bytecode_gc.wasm` also
+exports `(display s)` — a primitive that writes a string's bytes straight to
+`outbuf` (no quotes/escaping, unlike the value printer), so a program can draw a
+raw text frame; the value echo is suppressed when a program rendered this way.
+`strheap_used()` reports string-heap bytes (the heap is bump-only — see the
+quantified leak in `docs/project_notes/render_slice_plan.md`). Demo +
+measurement: `harness/render_probe.mjs`.
+
 ### Bytecode disassembly + wasm inspection
 
 Two views into "what is the VM actually executing," answering different
@@ -251,7 +259,7 @@ prototype/               bytecode optimization ladder (see prototype/README.md)
 wat/                     hand-editable WAT experiments
   probe.wat bc_edit.c bc_edit.wat bc_instr.wat
 harness/                 node drivers (also runs under Bun)
-  test_bc.mjs bench.mjs lisp-cli.mjs repl.mjs test_session.mjs
+  test_bc.mjs bench.mjs lisp-cli.mjs repl.mjs test_session.mjs render_probe.mjs
 native/                  native build (no wasm, no JIT) — see "Native build" above
   bench.c main.c
 web/                     self-contained browser showcase
