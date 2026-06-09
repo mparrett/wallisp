@@ -50,3 +50,7 @@
 (define base (strheap-mark))
 (define (render) (begin (display (frame st)) (strheap-reset base)))
 (define (turn dx dy) (begin (set! st (step st dx dy)) (render)))
+; (tick) reads the host-written input slots instead of literal args, so the host
+; can compile it once and rerun() it every frame — no per-turn recompile, no
+; code[] growth. This is the unbounded-play path (harness/game.mjs uses it).
+(define (tick) (turn (input 0) (input 1)))

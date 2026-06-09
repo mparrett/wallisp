@@ -16,12 +16,11 @@
 // Runs interactively in a TTY (raw mode); with piped stdin it replays the piped
 // bytes as keystrokes and prints each frame — so it is testable headlessly.
 //
-// KNOWN LIMIT: each turn is a fresh eval_persistent, which *appends* bytecode
-// (Milestone A keeps closures valid by never resetting cp). So code[] fills
-// after a few thousand turns and turns then return <error>. Plenty for a demo;
-// unbounded play needs a run-without-recompile path (a small input primitive +
-// invoking the compiled tick directly) — the next slice. The driver surfaces
-// the <error> rather than hiding it.
+// UNBOUNDED: the game's (tick) is compiled ONCE; each frame the host pokes the
+// action into input slots (read by (input i)) and re-runs the compiled tick via
+// rerun() — no per-turn recompile, so code[] never fills. With the per-frame
+// strheap reset and cons-arena GC, every per-tick growth vector is bounded
+// (verified at 1e6 ticks). No SharedArrayBuffer, no blocking read.
 
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -65,10 +64,19 @@ const isQuit = (k) => k === 'q' || k === '\x03'; // q or Ctrl-C
 async function main() {
   const ex = await load();
   const evl = makeEval(ex);
+  const dec = new TextDecoder();
   ex.reset_session();
-  evl(fs.readFileSync(GAME, 'utf8')); // defines (turn dx dy), renders itself, owns `base`
+  evl(fs.readFileSync(GAME, 'utf8')); // defines (tick), renders itself, owns `base`
 
-  const turn = (dx, dy) => evl(`(turn ${dx} ${dy})`);
+  // Unbounded path: compile (tick) once, then drive it with rerun() + input slots.
+  evl('(tick)');
+  const entry = ex.last_entry();
+  const turn = (dx, dy) => {
+    const slots = new Int32Array(ex.memory.buffer, ex.input_slots_ptr(), 8); // refetch: memory may move
+    slots[0] = dx; slots[1] = dy;
+    const n = ex.rerun(entry);
+    return dec.decode(new Uint8Array(ex.memory.buffer, ex.output_ptr(), n));
+  };
 
   if (!process.stdout.isTTY || !process.stdin.isTTY) {
     // Headless: replay piped bytes as keystrokes, print each frame.
@@ -82,7 +90,7 @@ async function main() {
       if (!mv) continue;
       const f = turn(...mv);
       process.stdout.write(`\nkey ${k}:\n${f}\n`);
-      if (f === '<error>') { process.stdout.write('[code[] exhausted]\n'); break; }
+      if (f === '<error>') { process.stdout.write('[tick error]\n'); break; }
     }
     return;
   }
@@ -104,7 +112,7 @@ async function main() {
       const mv = MOVES[k];
       if (!mv) continue;
       const f = turn(...mv);
-      if (f === '<error>') return quit('turn budget exhausted (code[] full) — restart to keep playing.');
+      if (f === '<error>') return quit('tick returned <error>.');
       draw(f);
     }
   });

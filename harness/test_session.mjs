@@ -88,6 +88,23 @@ async function main() {
   check('strheap-reset rejects non-fixnum', evl('eval_persistent', '(strheap-reset (quote a))'), '<error>');
   check('strheap-reset rejects past top', evl('eval_persistent', '(strheap-reset 9999999)'), '<error>');
 
+  // --- input slots + rerun: unbounded play without recompiling ---
+  ex.reset_session();
+  const slots = new Int32Array(ex.memory.buffer, ex.input_slots_ptr(), 8);
+  slots[0] = 7; slots[1] = -3;
+  check('(input 0) reads host slot', evl('eval_persistent', '(input 0)'), '7');
+  check('(input 1) reads host slot', evl('eval_persistent', '(input 1)'), '-3');
+  check('(input) out of range errors', evl('eval_persistent', '(input 99)'), '<error>');
+  // compile a form once, rerun it without recompiling; it sees fresh input
+  evl('eval_persistent', '(define (probe) (+ (input 0) (input 1)))');
+  evl('eval_persistent', '(probe)');
+  const entry = ex.last_entry();
+  slots[0] = 10; slots[1] = 5;
+  const rd = (n) => new TextDecoder().decode(new Uint8Array(ex.memory.buffer, ex.output_ptr(), n));
+  check('rerun re-runs compiled form w/ fresh input', rd(ex.rerun(entry)), '15');
+  slots[0] = 100; slots[1] = 1;
+  check('rerun again, newer input', rd(ex.rerun(entry)), '101');
+
   // --- reset_session clears the session ---
   ex.reset_session();
   check('x gone after reset', evl('eval_persistent', 'x'), '<error>');

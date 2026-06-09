@@ -180,6 +180,13 @@ per-frame strings are reclaimed via an explicit O(1) region-drop —
 render loop brackets each frame; ADR-004). Demo + before/after leak measurement:
 `harness/render_probe.mjs`.
 
+For unbounded real-time play (ADR-005) `bytecode_gc.wasm` exports
+`input_slots_ptr()` (host pokes ints, read by `(input i)`), `last_entry()` (the
+bytecode entry of the most recent eval), and `rerun(entry)` (re-execute compiled
+bytecode without touching `cp`). The driver compiles `(tick)` once and `rerun`s
+it per frame, so `code[]` stops growing — verified at 1e6 ticks. Driver:
+`harness/game.mjs`; game: `examples/coin2d.lisp`.
+
 ### Bytecode disassembly + wasm inspection
 
 Two views into "what is the VM actually executing," answering different

@@ -52,6 +52,8 @@ enum { SP_NIL=0, SP_T, SP_ERR, SP_UNBOUND,
        // Region-drop for transient strings: (strheap-mark) captures the heap top,
        // (strheap-reset m) drops back to it. See render_slice_plan.md.
        PR_STRMARK, PR_STRRESET,
+       // (input i): read host-written input slot i — fresh input without a recompile.
+       PR_INPUT,
        SP_COUNT };
 #define NIL mkspec(SP_NIL)
 #define TRUE mkspec(SP_T)
@@ -217,6 +219,13 @@ static int fits_fix64(long long v){ return v >= FIX_MIN && v <= FIX_MAX; }
 // inlined and validated at the VM level — apply_prim is the slow path.
 static void oemit(char c);   // fwd decl: outbuf/oemit are defined with the printer
 
+// Host-writable input slots: the host pokes ints here (via input_slots_ptr) and
+// the (input i) primitive reads them, so a compiled tick reads fresh input each
+// frame WITHOUT recompiling. With rerun() (below) this gives unbounded play.
+#define INPUT_SLOTS 8
+static i32 g_input[INPUT_SLOTS];
+static u32 g_last_entry = 0;   // bytecode entry of the most recent eval; rerun() target
+
 static u32 apply_prim(u32 prim,u32 args){
   u32 id=prim>>2;
   // (strheap-mark): 0-arg, so handle before the >=1-arg gate below.
@@ -250,6 +259,9 @@ static u32 apply_prim(u32 prim,u32 args){
     case PR_STRRESET: if(!is_nil(d0) || !is_fix(a)) return ERR;
       { i32 m=fixval(a); if(m<0 || (u32)m>strheap_top) return ERR; strheap_top=(u32)m; }
       return NIL;
+    // (input i): read host-written slot i (the host pokes ints via input_slots_ptr).
+    case PR_INPUT: if(!is_nil(d0) || !is_fix(a)) return ERR;
+      { i32 i=fixval(a); if(i<0 || i>=INPUT_SLOTS) return ERR; return mkfix(g_input[i]); }
   }
 
   if(!is_cons(d0)) return ERR;
@@ -742,6 +754,8 @@ static void init(){
   bindp("display",       mkspec(PR_DISPLAY));   // render slice
   bindp("strheap-mark",  mkspec(PR_STRMARK));   // region-drop: capture heap top
   bindp("strheap-reset", mkspec(PR_STRRESET));  // region-drop: drop back to a mark
+  bindp("input",         mkspec(PR_INPUT));     // read host-written input slot
+  for(u32 i=0;i<INPUT_SLOTS;i++) g_input[i]=0;
 }
 
 // ---- printer (identical) ---------------------------------------------------
@@ -793,6 +807,12 @@ __attribute__((export_name("gc_count"))) unsigned gc_count(){ return g_numgc; }
 // not yet reclaim (see the strheap comment / render_slice_plan.md). Lets a host
 // watch the per-frame string leak the render slice exposes.
 __attribute__((export_name("strheap_used"))) unsigned strheap_used(){ return strheap_top; }
+// Unbounded play: the host pokes ints into these slots (read by (input i)), then
+// re-runs an already-compiled form (e.g. (tick)) via rerun() — no per-frame
+// compilation, so code[] stops growing. last_entry() is the entry of the most
+// recent eval_persistent; pass it to rerun().
+__attribute__((export_name("input_slots_ptr"))) i32* input_slots_ptr(){ return g_input; }
+__attribute__((export_name("last_entry"))) unsigned last_entry(){ return g_last_entry; }
 // Compile + run the source currently staged in [rp,rend); print the result of
 // the last form, returning outbuf length. The caller has already set the
 // per-eval scratch (cp, outlen, g_cerr, g_oom, g_numgc, gc_enabled,
@@ -803,6 +823,7 @@ static u32 run_buffer(){
   u32 entry=cp;   // this eval's bytecode starts here (0 for eval_source; for a
                   // persistent session it appends past earlier evals, so closures
                   // defined on previous lines keep valid body pointers into code[])
+  g_last_entry=entry;   // remember it so rerun() can re-execute this form later
   // Compile all top-level forms into one stream: f1 POP f2 POP ... fN HALT
   u32 first=1; int any=0;
   for(;;){
@@ -889,4 +910,20 @@ u32 eval_persistent(u32 len){
   g_pending_str_off=STR_NONE;              // clear per-eval transient string state
   rp=inbuf; rend=inbuf+(len<INCAP?len:INCAP);
   return run_buffer();
+}
+
+// Re-execute already-compiled bytecode from `entry` (e.g. a (tick) form compiled
+// once via eval_persistent, whose entry came from last_entry()) WITHOUT compiling
+// anything new — cp does not move, so code[] stops growing per frame. The form
+// reads fresh input via (input i) and renders via (display ...); combined with
+// the game's per-frame strheap reset and the cons-arena GC, every per-tick growth
+// vector is bounded → unbounded play. Only per-eval scratch is reset, not cp.
+__attribute__((export_name("rerun")))
+u32 rerun(u32 entry){
+  if(entry>=cp) return 0;                  // guard: must point inside compiled code
+  outlen=0; g_cerr=0; g_oom=0; g_numgc=0; gc_enabled=1;
+  g_pending_str_off=STR_NONE;
+  u32 result=run(entry);
+  if(outlen==0 || result==ERR) print_val(result);
+  return outlen;
 }

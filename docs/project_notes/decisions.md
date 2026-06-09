@@ -193,3 +193,54 @@ frame"): worked through three failures before choosing explicit —
   case; the churn case is the trigger to revisit the compactor.
 - Tests: `test_session.mjs` 30/30 (+6 strheap checks incl. the literal-survives-
   reset trap); `test_bc.mjs` 70/70; zero imports preserved.
+
+## ADR-005: Run-without-recompile (input slots + rerun) for unbounded play (2026-06-08)
+
+**Context**: The B5 host game loop (`harness/game.mjs`) drove each turn with a
+fresh `eval_persistent("(turn dx dy)")`, which *appends* bytecode — Milestone A
+never resets `cp` so earlier closures keep valid body pointers. Measured budget:
+**~7,167 turns** before `code[]` (65536 words) fills and turns return `<error>`.
+The strheap region reset (ADR-004) had already removed the string leak, so
+`code[]` was the *only* remaining per-tick growth vector blocking unbounded play.
+
+**Decision**: Compile the per-frame tick **once**, then re-run that same bytecode
+every frame without compiling anything new. Two additive pieces in `bytecode_gc`:
+- **Input slots + `(input i)`** — a host-writable `i32 g_input[8]`, exposed via
+  the `input_slots_ptr()` export; `(input i)` reads slot `i`. The game's
+  `(tick)` reads `(input 0)`/`(input 1)` instead of literal args, so the action
+  arrives *without* an eval. This is the B2 input primitive the roadmap dropped
+  — genuinely earned here, where the alternative (an eval to set a global) is
+  exactly the recompile we're removing.
+- **`rerun(entry)` export** — re-executes compiled bytecode from `entry`
+  (obtained from `last_entry()` after the one-time `(tick)` compile) with the
+  per-eval scratch reset but **`cp` untouched**. `run()` already re-zeroes the
+  operand/call stacks + env on entry, and all game state lives in globals +
+  input slots, so re-running the identical `LOADG tick; CALL 0; HALT` bytecode
+  re-invokes the tick against fresh input each frame.
+
+**Why this works / why it's bounded now**: every per-tick growth vector is
+closed — `code[]` (rerun doesn't compile), strheap (per-frame region reset),
+cons arena (GC reclaims dead state tuples), symbols (no runtime interning),
+outbuf (reset each call). **Verified at 1,000,000 ticks**: no `<error>`,
+`strheap_used` flat at 132, ~53k ticks/s.
+
+**Alternatives considered**:
+- **Reset `cp` per turn** — reintroduces the Milestone A closure-clobber bug
+  (closures point into `code[]`). Rejected.
+- **A bytecode compactor** (reclaim dead top-level forms) — general but heavy,
+  and unnecessary once the tick is compiled once and reused.
+- **Invoke the tick closure directly from the host** (skip even the `(tick)`
+  trampoline) — would mean replicating the VM's call-frame setup in C; re-running
+  the tiny compiled `(tick)` form is simpler and reuses `run()` unchanged.
+
+**Consequences**:
+- `harness/game.mjs` now drives via `rerun` + input slots; play is unbounded.
+  `examples/coin2d.lisp` gained `(define (tick) (turn (input 0) (input 1)))`.
+- The host writes input by poking `input_slots_ptr()`; it must **refetch the
+  typed-array view** each use in case wasm memory moved (the driver does).
+- `eval_source` / `eval_persistent` unchanged; `rerun` guards `entry < cp`.
+- Tests: `test_session.mjs` 35/35 (+5 input/rerun checks); `test_bc.mjs` 70/70;
+  zero imports preserved; root wasm rebuilt in the same commit.
+- This closes the engine work for a real-time terminal game. Remaining is host
+  only (the xterm.js flavour) and the deferred strheap mark-compactor (ADR-004)
+  for persistent-string churn, which a transient-frame game doesn't hit.

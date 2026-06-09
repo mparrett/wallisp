@@ -145,12 +145,18 @@ for a real xorshift/PCG.
   the host owns the keyboard, nothing blocks in the wasm.
   - **xterm.js flavour** is the same loop with browser key events + `term.write`
     instead of `process.stdout`; not yet built (needs the page + bundle wiring).
-  - **Turn-budget limit (measured):** each turn is a fresh `eval_persistent`
-    which *appends* bytecode (Milestone A never resets `cp`, to keep closures
-    valid), so `code[]` fills at **~7,167 turns** and turns then return
-    `<error>` (the driver surfaces it). `strheap` stays flat (region reset
-    holds) — the remaining limit is `code[]`, not strings. Fine for a demo;
-    **unbounded play needs a run-without-recompile path** (next slice below).
+  - **Turn budget — LIFTED (2026-06-08, see below).** Originally each turn was a
+    fresh `eval_persistent` that *appends* bytecode, filling `code[]` at ~7,167
+    turns. Now the driver compiles `(tick)` once and `rerun()`s it per frame.
+
+- **Unbounded play — DONE (2026-06-08).** Run-without-recompile (ADR-005): the
+  game's `(tick)` is compiled once; each frame the host pokes the action into
+  input slots (read by `(input i)`) and re-runs the compiled tick via `rerun()`.
+  No per-frame compilation → `code[]` stops growing; with the strheap region
+  reset and cons-arena GC, every per-tick growth vector is bounded. **Verified at
+  1,000,000 ticks** (no `<error>`, `strheap_used` flat, ~53k ticks/s). This is
+  the B2 input primitive the roadmap had dropped — earned here, where the
+  alternative (an eval to set a global) is the recompile we're removing.
 
 ### The SAB nuance (vs the partner doc's pointer #7)
 
@@ -206,11 +212,13 @@ Milestone B — TUI game        (do A first)
      └ residual: mark-compactor for persistent churn   [engine, medium]  deferred
   B5 terminal host game-loop driver (harness/game.mjs) [host, medium]    done
      └ xterm.js flavour (browser key events + write)   [host, medium]    todo
+  B6 unbounded play: (input i) slots + rerun()         [engine, small]   done
+     compile (tick) once, rerun per frame; no code[] growth (1e6 ticks ok)
 
-Next slice — unbounded play (lift the ~7k-turn code[] budget):
-  run a pre-compiled tick without recompiling each turn — a small input slot the
-  game reads (the B2 we dropped, now earned) + invoking the compiled tick
-  directly, so eval_persistent stops appending bytecode per turn.  [engine, medium]
+Engine work for a real-time terminal game is COMPLETE. What's left is optional:
+  - xterm.js flavour of the driver                     [host, medium]
+  - strheap mark-compactor for persistent-string churn [engine, medium] (ADR-004)
+    — a transient-per-frame game never hits this.
 ```
 
 Open question for the ADR/owner: does wallisp *want* to grow this I/O surface

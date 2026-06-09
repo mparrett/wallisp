@@ -57,9 +57,10 @@ printf 'dddddddsssq' | node harness/game.mjs # headless: replays keys, prints fr
 ```
 
 It renders itself with `(display ...)` and resets the string heap each frame
-(`strheap-mark`/`strheap-reset`), so it can run indefinitely without leaking
-frame strings. (A per-turn-eval budget of ~7k turns applies — see the roadmap's
-B5 note.)
+(`strheap-mark`/`strheap-reset`). The driver compiles `(tick)` once and
+re-runs it per frame via `rerun()` with the action passed through `(input i)`
+slots, so there's no per-turn recompile — play is unbounded (verified at 1e6
+ticks; see the roadmap's B6 / ADR-005).
 
 ## Bigger reference programs
 
