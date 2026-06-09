@@ -33,6 +33,21 @@ engines accept the same source and produce the same output.
 | `04_lists.lisp`            | cons / car / cdr / null? / recursive list walk         | `55`   |
 | `05_closures.lisp`         | lexical capture, multiple instances sharing nothing    | `21`   |
 
+## Session examples (persistent REPL)
+
+`06_game_session.lisp` is different: it's a **turn-loop game** that relies on
+state surviving across evals, so it runs through the persistent-session REPL,
+not the one-shot CLI:
+
+```bash
+node harness/repl.mjs < examples/06_game_session.lisp     # final score: 2
+```
+
+A coin-collector where each `(go ±1)` is one turn and the RNG is threaded
+through the state tuple — see `docs/project_notes/terminal_game_roadmap.md`
+(Milestone A validation). The REPL is line-oriented, so each form stays on one
+line.
+
 ## Bigger reference programs
 
 These live outside `examples/` because they have other roles too:

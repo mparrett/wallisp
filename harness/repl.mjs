@@ -26,6 +26,7 @@ import { dirname, join } from 'path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WASM = join(HERE, '..', 'bytecode_gc.wasm');
+const PRELUDE = join(HERE, '..', 'standalone', 'prelude.lisp');
 const INCAP = 8192;
 
 async function load() {
@@ -41,18 +42,31 @@ function evalLine(ex, src) {
   return new TextDecoder().decode(new Uint8Array(ex.memory.buffer, ex.output_ptr(), n));
 }
 
+// Feed the shared prelude (not, >, >=, <=, length, reverse, fold, append, map,
+// filter, assoc) into the session so the REPL starts with the small stdlib
+// instead of bare core primitives. It's plain wallisp source — one
+// eval_persistent call defines it all. Silently skipped if the file is absent.
+function loadPrelude(ex) {
+  let src;
+  try { src = fs.readFileSync(PRELUDE, 'utf8'); } catch { return false; }
+  const out = evalLine(ex, src);
+  if (out === '<error>') { console.error('warning: prelude failed to load'); return false; }
+  return true;
+}
+
 async function main() {
   const ex = await load();
   ex.reset_session();
+  const havePrelude = loadPrelude(ex);
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'wallisp> ' });
-  console.error('wallisp REPL — persistent session. Ctrl-D to exit, :reset to clear.');
+  console.error(`wallisp REPL — persistent session${havePrelude ? ' (prelude loaded)' : ''}. Ctrl-D to exit, :reset to clear.`);
   rl.prompt();
 
   rl.on('line', (line) => {
     const src = line.trim();
     if (src === '') { rl.prompt(); return; }
-    if (src === ':reset') { ex.reset_session(); console.log('; session cleared'); rl.prompt(); return; }
+    if (src === ':reset') { ex.reset_session(); loadPrelude(ex); console.log('; session cleared'); rl.prompt(); return; }
     try {
       console.log(evalLine(ex, src));
     } catch (e) {

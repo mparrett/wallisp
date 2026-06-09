@@ -68,6 +68,48 @@ bytecode (records an `entry` offset, `run(entry)`), never resets `cp`.
 Remaining for a "real" Milestone A (beyond prototype): tty niceties
 (multi-line input, history, arena/`code[]` pressure surfaced to the user).
 
+### Validation: a turn-loop game in the persistent session (2026-06-08)
+
+Drove a tiny coin-collector through the REPL — state `(pos coin score seed)`,
+each `(go ±1)` one turn, collecting a coin respawns it via a threaded LCG.
+Runnable artifact: `examples/06_game_session.lisp`. The whole point is that
+definitions from the first lines drove turns a dozen lines later — impossible
+before A1 (every line used to reset the VM). This **empirically confirms the
+persistent session is a usable turn-loop substrate today**, and promotes two
+partner-doc pointers from "should work" to "validated":
+
+- **#1 pure `(state,action)→state`** — `step`/`place`/`respawn` are pure over
+  the state tuple; the only mutation is `go`, a one-line `set!` turn operator.
+  Every turn is trivially loggable/replayable, exactly as the doc urges.
+- **#2 RNG threaded as a value** — the seed lives *in* the state tuple; same
+  start seed → identical trace. No ambient `(rand)`.
+
+Engine constraints that shaped the program (all worked around in core wallisp,
+none blocking): no `list` primitive (built state from `cons`), no prelude
+auto-loaded in the REPL (defined own `clamp`/accessors), and the LCG must be
+small-modulus (`(mod (* (+ s 1) 75) 65537)`) to stay under the 30-bit fixnum
+cap — a bigger multiplier overflows to `<error>`, and there are no bitwise ops
+for a real xorshift/PCG.
+
+### Two insights from the demo that *simplify* Milestone B
+
+1. **Input needs no engine primitive in the host-driven model.** The game is
+   already "played" by the host sending an expression per turn. In a real
+   game the host (Node/xterm.js) owns the keyboard: keypress → host writes
+   `(go <action>)` → `eval_persistent` → render. So **B2 (`read-key`) is
+   largely unnecessary** the same way SAB was — it only matters if the *Lisp
+   program* runs its own blocking loop instead of the host driving turns. This
+   further shrinks B.
+2. **Rendering is the real next gap, and it's a raw-output problem.** Today a
+   turn prints its result as a Lisp value — `(5 2 1 8432)`. A game wants a
+   grid. Strings exist in `bytecode_gc`, but `print_val` emits them *quoted and
+   escaped* (`"....\n...."`), so a string frame renders with literal `\n` and
+   quotes. The missing piece is a **raw frame-output path** (a `display`-style
+   primitive, or printing a top-level string result verbatim). That — not
+   input — is the next engine slice. It leans on strings, so B4's incomplete
+   string-heap reclamation becomes relevant once a game allocates a frame per
+   turn.
+
 ---
 
 ## Milestone B — xterm.js TUI game (real-time loop)
@@ -103,8 +145,8 @@ handshake**. This removes the fiddliest part of their recipe.
 
 | # | Pointer | Status for wallisp |
 |---|---------|--------------------|
-| 1 | Pure `(state,action)→state` + action log | **Free.** We're a pure evaluator — ideal host. Lives in the game program, not the engine. |
-| 2 | Thread RNG as a value | **Adoptable today** — an LCG needs only `* + mod`, which we have. (No bitwise → no xorshift/PCG.) |
+| 1 | Pure `(state,action)→state` + action log | **Validated** (2026-06-08 game demo) — pure dispatch + `set!` turn operator in core wallisp. Lives in the game program, not the engine. |
+| 2 | Thread RNG as a value | **Validated** (2026-06-08) — threaded LCG `(mod (* (+ s 1) 75) 65537)`; same seed → same trace. Small-modulus only (no bitwise → no xorshift/PCG). |
 | 3 | Action log as ABI / versioning | Program-level; needs robust strings (B4) if logs are serialized as text. |
 | 4 | Headless-safe `term/size` | N/A yet — no terminal primitives to make safe. Relevant once B3 lands. |
 | 5 | Pin runtime in CI + drift smoke | Cheap CI hygiene; orthogonal to engine. |
