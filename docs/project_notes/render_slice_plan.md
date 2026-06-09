@@ -109,3 +109,31 @@ real blocker for a sustained TUI game. The render *capability* is done; the next
 engine work is a strheap reclamation strategy (free-list or compactor, or — for
 short-lived per-frame strings — a region/generation reset between frames). That
 is the next slice. Reproduce with `node harness/render_probe.mjs`.
+
+## Follow-up: per-frame region reset (2026-06-08) — leak fixed for transient frames
+
+Built the region-drop, not the compactor (rationale + the three rejected
+automatic designs are ADR-004). Two primitives:
+
+- `(strheap-mark)` → current heap top as a fixnum.
+- `(strheap-reset m)` → drop the heap back to `m` (O(1)). Caller contract: no
+  string allocated after the mark may still be reachable after the reset.
+
+The render loop captures `base` *after* its definitions (so the `"@"`/`"."`/`"\n"`
+literals, allocated at define time, sit below `base`) and resets to `base` each
+turn. `render_probe.mjs` measures it:
+
+| | without reset | with region reset |
+|---|---|---|
+| strheap after 8k turns | exhausted (`<error>`) | — |
+| strheap after **100,000** turns | (would need ~12 MB) | **36 bytes, flat** |
+| growth | ~128 B/turn | **0** |
+
+`strheap_used` stays exactly at `base` (36 bytes — just the literals) across
+100k frames. Verified literals survive a reset+realloc (the correctness trap):
+`test_session.mjs` 30/30.
+
+**Residual:** strings *kept* across frames (persistent-string churn) still leak;
+only the general mark-compactor fixes that. Trigger to revisit: a program that
+keeps allocating long-lived strings. For transient per-frame rendering — the
+game case — the region reset is sufficient and O(1).

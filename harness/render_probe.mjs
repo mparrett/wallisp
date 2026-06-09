@@ -1,17 +1,20 @@
 #!/usr/bin/env node
-// render_probe.mjs — render slice demo + the string-heap leak measurement.
+// render_probe.mjs — render slice demo + the string-heap leak, before and after
+// the per-frame region reset.
 //
 //   node harness/render_probe.mjs
 //
-// Two things, both over bytecode_gc.wasm's persistent session:
+// Over bytecode_gc.wasm's persistent session:
 //   1. Capability — render the coin game as a raw text grid via (display ...).
-//   2. Measurement (pre-registered, render_slice_plan.md) — drive many turns
-//      that build a frame string each turn and watch strheap_used. Prediction:
-//      monotonic growth, zero reclamation -> exhaustion. Confirms B4 is the
-//      real game blocker and quantifies it (bytes/turn, turns-to-exhaustion).
+//   2. Leak — drive frame-building turns with NO reset; strheap grows ~128
+//      bytes/turn, gc_count never moves, exhausts the 1 MB heap (~8200 turns).
+//   3. Fix — bracket each frame with (strheap-mark)/(strheap-reset base): the
+//      heap stays FLAT across 100k frames. base is captured AFTER the defs, so
+//      the render functions' string literals (below base) are preserved while
+//      per-frame scratch (above base) is dropped in O(1).
 //
-// The driver recurses inside ONE eval (flat via TCO) so per-turn work doesn't
-// recompile — isolating the strheap leak from the code[]-append limit.
+// Drivers recurse inside ONE eval (flat via TCO) so per-turn work doesn't
+// recompile — isolating strheap behaviour from the code[]-append limit.
 
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -21,9 +24,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const WASM = join(HERE, '..', 'bytecode_gc.wasm');
 const STR_HEAP_BYTES = 1048576; // mirror of STR_HEAP_BYTES in bytecode_gc.c
 
-// Coin-collector + a grid renderer, all in core wallisp + strings. Frame is a
-// 10-cell row: @ = player, o = coin, . = empty. row builds left-to-right with
-// string-append (each intermediate allocates in strheap).
+// Coin-collector + grid renderer. `base` is captured AFTER every defn, so the
+// "@"/"o"/"."/"\n" literals are below it. drive-leak builds a frame per turn and
+// keeps it; drive-region drops back to base each turn.
 const DEFS = `
 (define (rng s) (mod (* (+ s 1) 75) 65537))
 (define (mk a b c d) (cons a (cons b (cons c (cons d ())))))
@@ -40,7 +43,9 @@ const DEFS = `
 (define (frame st) (string-append (row 0 10 (s-pos st) (s-coin st)) "\n"))
 (define st (mk 0 (mod 12345 10) 0 12345))
 (define (view mv) (begin (set! st (step st mv)) (display (frame st))))
-(define (drive n mv) (if (= n 0) st (begin (set! st (step st mv)) (frame st) (drive (- n 1) mv))))
+(define base (strheap-mark))
+(define (drive-leak n mv) (if (= n 0) st (begin (set! st (step st mv)) (begin (frame st) (drive-leak (- n 1) mv)))))
+(define (drive-region n mv) (if (= n 0) st (begin (set! st (step st mv)) (begin (frame st) (begin (strheap-reset base) (drive-region (- n 1) mv))))))
 `;
 
 async function main() {
@@ -53,34 +58,40 @@ async function main() {
     const n = ex.eval_persistent(d.length);
     return dec.decode(new Uint8Array(ex.memory.buffer, ex.output_ptr(), n));
   };
-
-  ex.reset_session();
-  evl(DEFS);
+  const setup = () => { ex.reset_session(); evl(DEFS); };
 
   // 1. Capability: render a few turns as a grid.
+  setup();
   console.log('=== rendered grid (@ player, o coin) — right ×6, left ×3 ===');
   for (const mv of [1, 1, 1, 1, 1, 1, -1, -1, -1]) process.stdout.write(evl(`(view ${mv})`));
   console.log(`score: ${evl('(s-score st)')}`);
 
-  // 2. Measurement: drive frame-building turns, sample strheap_used.
-  console.log('\n=== strheap leak: build a frame per turn, watch the heap ===');
-  console.log('  turns   strheap_used   bytes/turn   gc_count');
-  const K = 200, CAP = 200000;
-  let turns = 0, prev = ex.strheap_used();
-  while (turns < CAP) {
-    const out = evl(`(drive ${K} 1)`);
-    const used = ex.strheap_used();
-    if (out === '<error>') {
-      console.log(`  exhausted between turns ${turns} and ${turns + K}: strheap_used=${used}/${STR_HEAP_BYTES}, eval -> <error>`);
-      turns += K; prev = used; break;
-    }
+  // 2. Leak: drive frame-building turns with no reset.
+  setup();
+  console.log('\n=== WITHOUT region reset: strheap leaks ===');
+  console.log('  turns   strheap_used   gc_count');
+  const K = 200;
+  let turns = 0;
+  while (turns < 9000) {
+    const out = evl(`(drive-leak ${K} 1)`);
     turns += K;
-    if (turns % 1000 === 0) console.log(`  ${String(turns).padStart(5)}    ${String(used).padStart(10)}    ${String((used / turns).toFixed(1)).padStart(7)}      ${ex.gc_count()}`);
-    prev = used;
+    if (out === '<error>') { console.log(`  ${String(turns).padStart(5)}    exhausted -> <error> (1 MB heap full)`); break; }
+    if (turns % 2000 === 0) console.log(`  ${String(turns).padStart(5)}    ${String(ex.strheap_used()).padStart(10)}    ${ex.gc_count()}`);
   }
-  const perTurn = (prev / turns);
-  console.log(`\nresult: ~${perTurn.toFixed(0)} bytes/turn leaked, gc_count=${ex.gc_count()} (collector never reclaims strheap),`);
-  console.log(`        ~${turns} turns to exhaust ${STR_HEAP_BYTES} bytes. Confirms B4 (render_slice_plan.md).`);
+
+  // 3. Fix: bracket each frame with mark/reset.
+  setup();
+  console.log('\n=== WITH region reset: strheap stays flat ===');
+  const base = parseInt(evl('base'), 10);
+  console.log(`  base (literals below) = ${base} bytes`);
+  console.log('  turns   strheap_used   gc_count');
+  for (let t = 20000; t <= 100000; t += 20000) {
+    evl(`(drive-region 20000 1)`);
+    console.log(`  ${String(t).padStart(6)}    ${String(ex.strheap_used()).padStart(10)}    ${ex.gc_count()}`);
+  }
+  const finalUsed = ex.strheap_used();
+  console.log(`\nresult: 100k frames rendered, strheap_used=${finalUsed} (== base ${base}: ${finalUsed === base}),`);
+  console.log(`        zero growth. Per-frame region reset fixes the B4 leak for transient frames.`);
 }
 
 main().catch(e => { console.error('render_probe:', e.message); process.exit(1); });

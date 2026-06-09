@@ -65,6 +65,29 @@ async function main() {
   check('plain value still echoes', evl('eval_persistent', '(+ 1 2)'), '3');
   check('normal string still quoted', evl('eval_persistent', '(string-append "a" "b")'), '"ab"');
 
+  // --- strheap region drop: (strheap-mark) / (strheap-reset m) ---
+  ex.reset_session();
+  check('strheap-mark is a fixnum', evl('eval_persistent', '(number? (strheap-mark))'), 't');
+  // reset reclaims: used returns to the mark after allocating + dropping
+  evl('eval_persistent', '(define m (strheap-mark))');
+  const at = ex.strheap_used();
+  evl('eval_persistent', '(string-append "aaaa" "bbbb")');
+  check('alloc grows strheap', ex.strheap_used() > at, true);
+  evl('eval_persistent', '(strheap-reset m)');
+  check('reset reclaims to mark', ex.strheap_used(), at);
+  // the correctness trap: a literal allocated BELOW the mark survives a reset
+  // followed by reallocation over the dropped region.
+  ex.reset_session();
+  evl('eval_persistent', '(define (tag) "HELLO")');     // literal below the mark
+  evl('eval_persistent', '(define base (strheap-mark))');
+  evl('eval_persistent', '(string-append "junk" "junk2")');
+  evl('eval_persistent', '(strheap-reset base)');
+  evl('eval_persistent', '(string-append "over" "write")'); // realloc over dropped region
+  check('literal below mark survives reset', evl('eval_persistent', '(tag)'), '"HELLO"');
+  // guard rails
+  check('strheap-reset rejects non-fixnum', evl('eval_persistent', '(strheap-reset (quote a))'), '<error>');
+  check('strheap-reset rejects past top', evl('eval_persistent', '(strheap-reset 9999999)'), '<error>');
+
   // --- reset_session clears the session ---
   ex.reset_session();
   check('x gone after reset', evl('eval_persistent', 'x'), '<error>');

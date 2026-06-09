@@ -126,13 +126,16 @@ for a real xorshift/PCG.
   text grid (`harness/render_probe.mjs`). ANSI can be `string-append`-ed in or
   emitted host-side — no extra primitive needed. Also added `strheap_used()`
   introspection. See `render_slice_plan.md`.
-- **B4. Strings with real reclamation — THE BLOCKER (now quantified).** Only
-  `bytecode_gc` has strings and its side-heap is a pure bump pointer —
-  `gc()` resets mark bits but **frees nothing**. The render slice measured the
-  leak: **~128 bytes/turn, gc_count never moves, 1 MB exhausted in ~8,200
-  turns** for a 10-cell frame (hundreds of frames at realistic size). This is
-  now the next engine slice: a free-list/compactor, or — since frame strings
-  are short-lived — a per-frame region reset. (engine, medium — the real work.)
+- **B4. Strings with real reclamation — addressed for transient frames
+  (2026-06-08).** The side heap is a pure bump pointer (`gc()` frees nothing);
+  the render slice measured the leak at **~128 bytes/turn, exhausting 1 MB in
+  ~8,200 turns**. Shipped the **per-frame region reset**: `(strheap-mark)` /
+  `(strheap-reset m)` (O(1) region-drop; ADR-004 for why this over automatic
+  reclamation — literal-corruption + escape-detection hazards). The render loop
+  brackets each frame; `render_probe.mjs` shows `strheap_used` **flat at 36
+  bytes across 100,000 frames** (vs exhaustion). **Residual:** persistent-string
+  *churn* (strings kept across frames) still leaks — only a mark-compactor fixes
+  that; deferred until it bites. For a game's transient frames, this is done.
 - **B5. Host game-loop driver** in JS wiring xterm.js (input → eval → flush).
   (host, medium)
 

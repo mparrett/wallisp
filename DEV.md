@@ -174,9 +174,11 @@ For terminal rendering (Milestone B render slice) `bytecode_gc.wasm` also
 exports `(display s)` — a primitive that writes a string's bytes straight to
 `outbuf` (no quotes/escaping, unlike the value printer), so a program can draw a
 raw text frame; the value echo is suppressed when a program rendered this way.
-`strheap_used()` reports string-heap bytes (the heap is bump-only — see the
-quantified leak in `docs/project_notes/render_slice_plan.md`). Demo +
-measurement: `harness/render_probe.mjs`.
+`strheap_used()` reports string-heap bytes. The heap is bump-only, so transient
+per-frame strings are reclaimed via an explicit O(1) region-drop —
+`(strheap-mark)` captures the top, `(strheap-reset m)` drops back to it (the
+render loop brackets each frame; ADR-004). Demo + before/after leak measurement:
+`harness/render_probe.mjs`.
 
 ### Bytecode disassembly + wasm inspection
 

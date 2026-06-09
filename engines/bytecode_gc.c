@@ -49,6 +49,9 @@ enum { SP_NIL=0, SP_T, SP_ERR, SP_UNBOUND,
        PR_STRINGP, PR_STRLEN, PR_STRREF, PR_STREQ, PR_STRAPPEND,
        // Render slice: raw frame output (bytecode_gc only) — see render_slice_plan.md
        PR_DISPLAY,
+       // Region-drop for transient strings: (strheap-mark) captures the heap top,
+       // (strheap-reset m) drops back to it. See render_slice_plan.md.
+       PR_STRMARK, PR_STRRESET,
        SP_COUNT };
 #define NIL mkspec(SP_NIL)
 #define TRUE mkspec(SP_T)
@@ -216,6 +219,8 @@ static void oemit(char c);   // fwd decl: outbuf/oemit are defined with the prin
 
 static u32 apply_prim(u32 prim,u32 args){
   u32 id=prim>>2;
+  // (strheap-mark): 0-arg, so handle before the >=1-arg gate below.
+  if(id==PR_STRMARK){ if(!is_nil(args)) return ERR; return mkfix((i32)strheap_top); }
   if(!is_cons(args)) return ERR;
   u32 a  = car(args);
   u32 d0 = cdr(args);
@@ -237,6 +242,13 @@ static u32 apply_prim(u32 prim,u32 args){
     // when a program produced output this way (see run_buffer).
     case PR_DISPLAY: if(!is_nil(d0) || !is_string(a)) return ERR;
       { u32 n=str_len(a); const u8* dat=str_data(a); for(u32 k=0;k<n;k++) oemit((char)dat[k]); }
+      return NIL;
+    // Drop the string heap back to a mark from (strheap-mark). O(1) region
+    // reclaim of transient strings allocated since the mark. CALLER CONTRACT:
+    // no string allocated after the mark may still be reachable after this —
+    // their wrapper offsets would dangle. Used to free per-frame render scratch.
+    case PR_STRRESET: if(!is_nil(d0) || !is_fix(a)) return ERR;
+      { i32 m=fixval(a); if(m<0 || (u32)m>strheap_top) return ERR; strheap_top=(u32)m; }
       return NIL;
   }
 
@@ -728,6 +740,8 @@ static void init(){
   bindp("string=?",      mkspec(PR_STREQ));
   bindp("string-append", mkspec(PR_STRAPPEND));
   bindp("display",       mkspec(PR_DISPLAY));   // render slice
+  bindp("strheap-mark",  mkspec(PR_STRMARK));   // region-drop: capture heap top
+  bindp("strheap-reset", mkspec(PR_STRRESET));  // region-drop: drop back to a mark
 }
 
 // ---- printer (identical) ---------------------------------------------------

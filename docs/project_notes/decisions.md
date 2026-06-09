@@ -135,3 +135,61 @@ default mission creep, and pin the approach so it doesn't drift:
 - Next concrete step when picked up: prototype Milestone A's `eval_persistent`
   seam + a minimal Node REPL driver, to validate the session change is as small
   as claimed.
+
+## ADR-004: Explicit region-drop for transient strings, not automatic reclamation (2026-06-08)
+
+**Context**: The render slice (`render_slice_plan.md`) quantified B4 — the
+`bytecode_gc` string heap is a pure bump pointer (`gc()` resets mark bits but
+frees nothing), so a per-frame string render leaks ~128 bytes/turn and exhausts
+1 MB in ~8,200 frames. We needed reclamation of short-lived per-frame strings.
+
+**Decision**: Add two primitives — `(strheap-mark)` returns the current heap
+top, `(strheap-reset m)` drops the heap back to a mark — and have the render
+loop bracket each frame with them. O(1) region-drop (tinylisp/`lisp_region.c`
+lineage). The mark is captured *after* definitions, so string *literals* (which
+`compile` allocates into the heap at define time and `OP_CONST` references from
+persistent bytecode) sit below the mark and are preserved; only per-frame
+scratch above the mark is dropped.
+
+**Why not automatic per-eval reclamation** (the tempting "just reset each
+frame"): worked through three failures before choosing explicit —
+- **Reset-to-0 corrupts literals.** `"@"`/`"."`/`"\n"` are allocated at define
+  time and live in persistent bytecode; resetting below them clobbers them on
+  the next allocation. Any reset point must be a post-setup watermark, which
+  needs a signal — exactly what `strheap-mark` provides.
+- **Cheap escape-detection is unsafe OR useless.** Flagging only user
+  `cons`/`set!`/`define` of a string misses strings *captured in a closure*
+  that's then stored to a global (env frames are built by the VM, not user
+  `cons`) → dangling pointer. Flagging *internal* `cons` instead is safe but
+  trips on every transient primitive arg-list (`string-append`'s args get
+  consed), so a pure render tenures every frame and reclaims nothing.
+- **Sound automatic reclamation needs a compactor.** Live strings are
+  interspersed with dead ones, so reclaiming them requires sliding survivors
+  and rewriting wrapper offsets (a moving collector for the side heap). That's
+  the heavier "medium" work the roadmap flagged; deferred.
+
+**Alternatives considered**:
+- **Mark-compact the strheap in `gc()`** — the general fix; correct and
+  automatic but ~50–80 lines (forwarding/sort, root the `OP_CONST` constants).
+  Deferred until persistent-string churn (below) actually bites.
+- **A host opt-in "frame mode" that resets to a fixed base** — still needs the
+  post-setup base, i.e. the same watermark; explicit primitives are more
+  flexible (per-region within an eval) for the same cost.
+
+**Consequences**:
+- Per-frame render leak is fixed under the discipline: `render_probe.mjs` shows
+  `strheap_used` flat at 36 bytes across **100,000 frames** (vs exhaustion at
+  ~8,200 without it). Works in both execution models (host-driven one-eval-per-
+  frame and a single-eval recursive loop) because the boundary is per-turn, not
+  per-eval.
+- **Caller contract** (documented at the primitive and in the plan): no string
+  allocated after the mark may still be reachable after the reset — its wrapper
+  offset would dangle. `strheap-reset` validates the mark is a fixnum in
+  `[0, top]`, but cannot detect a live escapee; that's the program's
+  responsibility, as with any region allocator.
+- **Residual leak — persistent-string churn.** Strings *kept* across frames
+  (e.g. redefining a global string each turn) still accumulate; only the
+  general compactor fixes that. Tests + `render_probe.mjs` cover the transient
+  case; the churn case is the trigger to revisit the compactor.
+- Tests: `test_session.mjs` 30/30 (+6 strheap checks incl. the literal-survives-
+  reset trap); `test_bc.mjs` 70/70; zero imports preserved.
