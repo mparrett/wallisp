@@ -48,6 +48,19 @@ through the state tuple — see `docs/project_notes/terminal_game_roadmap.md`
 (Milestone A validation). The REPL is line-oriented, so each form stays on one
 line.
 
+`coin2d.lisp` is a playable 2D version driven by the host game loop
+`harness/game.mjs` (wasd/arrows move, `q` quits):
+
+```bash
+node harness/game.mjs                       # interactive (raw TTY)
+printf 'dddddddsssq' | node harness/game.mjs # headless: replays keys, prints frames
+```
+
+It renders itself with `(display ...)` and resets the string heap each frame
+(`strheap-mark`/`strheap-reset`), so it can run indefinitely without leaking
+frame strings. (A per-turn-eval budget of ~7k turns applies — see the roadmap's
+B5 note.)
+
 ## Bigger reference programs
 
 These live outside `examples/` because they have other roles too:

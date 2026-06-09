@@ -136,8 +136,21 @@ for a real xorshift/PCG.
   bytes across 100,000 frames** (vs exhaustion). **Residual:** persistent-string
   *churn* (strings kept across frames) still leaks — only a mark-compactor fixes
   that; deferred until it bites. For a game's transient frames, this is done.
-- **B5. Host game-loop driver** in JS wiring xterm.js (input → eval → flush).
-  (host, medium)
+- **B5. Host game-loop driver — DONE (2026-06-08), terminal flavour.**
+  `harness/game.mjs`: keypress → `eval_persistent("(turn dx dy)")` → the game
+  renders a frame via `display` → host flushes it with a cursor-home so it
+  redraws in place. Raw-TTY interactive, plus a headless piped-keys mode for
+  testing. Game content: `examples/coin2d.lisp` (2D coin collector, renders
+  itself, region-resets each frame). No SAB/COI, no engine input primitive —
+  the host owns the keyboard, nothing blocks in the wasm.
+  - **xterm.js flavour** is the same loop with browser key events + `term.write`
+    instead of `process.stdout`; not yet built (needs the page + bundle wiring).
+  - **Turn-budget limit (measured):** each turn is a fresh `eval_persistent`
+    which *appends* bytecode (Milestone A never resets `cp`, to keep closures
+    valid), so `code[]` fills at **~7,167 turns** and turns then return
+    `<error>` (the driver surfaces it). `strheap` stays flat (region reset
+    holds) — the remaining limit is `code[]`, not strings. Fine for a demo;
+    **unbounded play needs a run-without-recompile path** (next slice below).
 
 ### The SAB nuance (vs the partner doc's pointer #7)
 
@@ -181,16 +194,23 @@ The first three are small; string reclamation is the one genuine chunk of work.
 ## Sequencing
 
 ```
-Milestone A — interactive REPL
-  A1 persistent session (eval_persistent seam)         [engine, small]
-  + Node tty/readline driver                           [host, small]
+Milestone A — interactive REPL                         [DONE]
+  A1 persistent session (eval_persistent seam)         [engine, small]   done
+  + Node tty/readline driver (harness/repl.mjs)        [host, small]     done
 
-Milestone B — xterm.js TUI game        (do A first)
-  B1 persistent state across ticks (= A1)              [engine, small]
-  B2 (read-key) input primitive + ABI slot             [engine, small–medium]
-  B3 (term/write)/(term/move-cursor) streaming ANSI    [engine, small–medium]
-  B4 strings with real reclamation  ← THE BLOCKER      [engine, medium]
-  B5 xterm.js host game-loop driver                    [host, medium]
+Milestone B — TUI game        (do A first)
+  B1 persistent state across ticks (= A1)              [engine, small]   done
+  B2 (read-key) input primitive                        [DROPPED — host owns input]
+  B3 (display) raw frame output                        [engine, small]   done
+  B4 strings: per-frame region reset (transient)       [engine, small]   done
+     └ residual: mark-compactor for persistent churn   [engine, medium]  deferred
+  B5 terminal host game-loop driver (harness/game.mjs) [host, medium]    done
+     └ xterm.js flavour (browser key events + write)   [host, medium]    todo
+
+Next slice — unbounded play (lift the ~7k-turn code[] budget):
+  run a pre-compiled tick without recompiling each turn — a small input slot the
+  game reads (the B2 we dropped, now earned) + invoking the compiled tick
+  directly, so eval_persistent stops appending bytecode per turn.  [engine, medium]
 ```
 
 Open question for the ADR/owner: does wallisp *want* to grow this I/O surface

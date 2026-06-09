@@ -261,7 +261,7 @@ prototype/               bytecode optimization ladder (see prototype/README.md)
 wat/                     hand-editable WAT experiments
   probe.wat bc_edit.c bc_edit.wat bc_instr.wat
 harness/                 node drivers (also runs under Bun)
-  test_bc.mjs bench.mjs lisp-cli.mjs repl.mjs test_session.mjs render_probe.mjs
+  test_bc.mjs bench.mjs lisp-cli.mjs repl.mjs test_session.mjs render_probe.mjs game.mjs
 native/                  native build (no wasm, no JIT) — see "Native build" above
   bench.c main.c
 web/                     self-contained browser showcase
