@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>wallisp — TUI game (xterm.js)</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+<style>
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: #14110f; color: #d6cfc6; margin: 0; padding: 2.2em 1em;
+         display: flex; flex-direction: column; align-items: center; gap: 0.9em; }
+  h1 { font-size: 1.05em; font-weight: 700; margin: 0; letter-spacing: .02em; }
+  .sub { color: #8a807a; font-size: 0.85em; max-width: 44em; text-align: center; }
+  #term { width: 360px; }
+  .bar { color: #8a807a; font-size: 0.82em; display: flex; gap: 1.4em; }
+  .bar b { color: #e0894a; font-weight: 600; }
+  kbd { background: #2a2420; border: 1px solid #3a332d; border-radius: 4px;
+        padding: 0 .4em; color: #d6cfc6; font-size: .9em; }
+</style>
+</head>
+<body>
+<h1>wallisp — a TUI game on a zero-imports Lisp→wasm VM</h1>
+<div class="sub">
+  Same host-driven loop as <code>harness/game.mjs</code>, in the browser:
+  a keypress pokes the action into the module's input slots, <code>rerun()</code>
+  re-executes the once-compiled <code>(tick)</code>, and the frame it renders via
+  <code>(display …)</code> is written to xterm.js. No SharedArrayBuffer, no
+  cross-origin isolation — nothing blocks inside the wasm.
+</div>
+<div id="term"></div>
+<div class="bar">
+  <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows — move</span>
+  <span id="status">loading…</span>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script>
+const WASM_B64 = "@@WASM_B64@@";
+const GAME_LISP = @@GAME_LISP@@;
+
+(async () => {
+  const status = document.getElementById("status");
+  const bytes = Uint8Array.from(atob(WASM_B64), c => c.charCodeAt(0));
+  const { instance } = await WebAssembly.instantiate(bytes, {}); // {} = no imports
+  const ex = instance.exports;
+
+  const readOut = (n) =>
+    new TextDecoder().decode(new Uint8Array(ex.memory.buffer, ex.output_ptr(), n));
+  const evalP = (text) => {
+    const b = new TextEncoder().encode(text);
+    new Uint8Array(ex.memory.buffer, ex.input_ptr(), b.length).set(b);
+    return readOut(ex.eval_persistent(b.length));
+  };
+
+  // Boot the session: define the game, then compile (tick) ONCE and keep its entry.
+  ex.reset_session();
+  evalP(GAME_LISP);
+  evalP("(tick)");
+  const entry = ex.last_entry();
+
+  // One frame: poke the action into the input slots, rerun the compiled tick
+  // (no recompile), read back the rendered frame.
+  const frame = (dx, dy) => {
+    const slots = new Int32Array(ex.memory.buffer, ex.input_slots_ptr(), 8); // refetch: memory may move
+    slots[0] = dx; slots[1] = dy;
+    return readOut(ex.rerun(entry));
+  };
+
+  const term = new Terminal({
+    cols: 14, rows: 8, fontSize: 18, cursorStyle: "underline", cursorBlink: false,
+    theme: { background: "#14110f", foreground: "#d6cfc6", cursor: "#14110f" },
+  });
+  term.open(document.getElementById("term"));
+  term.focus();
+
+  // The frame uses '\n' between rows; a terminal needs '\r\n'. Clear + home each
+  // frame so it redraws in place (frame is small — no perceptible flicker).
+  const draw = (f) => term.write("\x1b[2J\x1b[H" + f.replace(/\n/g, "\r\n"));
+
+  const MOVES = {
+    ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+    w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0],
+  };
+  term.onKey(({ domEvent }) => {
+    const mv = MOVES[domEvent.key];
+    if (!mv) return;
+    domEvent.preventDefault();
+    draw(frame(mv[0], mv[1]));
+  });
+
+  draw(frame(0, 0));
+  status.textContent = "ready — click the grid and play";
+})().catch(e => {
+  document.getElementById("status").textContent = "error: " + e.message;
+});
+</script>
+</body>
+</html>

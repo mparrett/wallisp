@@ -143,8 +143,11 @@ for a real xorshift/PCG.
   testing. Game content: `examples/coin2d.lisp` (2D coin collector, renders
   itself, region-resets each frame). No SAB/COI, no engine input primitive —
   the host owns the keyboard, nothing blocks in the wasm.
-  - **xterm.js flavour** is the same loop with browser key events + `term.write`
-    instead of `process.stdout`; not yet built (needs the page + bundle wiring).
+  - **xterm.js flavour — DONE (2026-06-09).** `web/game.html` (generated from
+    `web/game-template.html` by `web/build-game.sh`, which inlines the wasm +
+    `coin2d.lisp`): browser key events → input slots → `rerun()` → `term.write`
+    the frame to xterm.js. Same host-driven loop as `harness/game.mjs`; xterm.js
+    from CDN, everything else embedded so it opens from `file://`. No SAB/COI.
   - **Turn budget — LIFTED (2026-06-08, see below).** Originally each turn was a
     fresh `eval_persistent` that *appends* bytecode, filling `code[]` at ~7,167
     turns. Now the driver compiles `(tick)` once and `rerun()`s it per frame.
@@ -215,8 +218,11 @@ Milestone B — TUI game        (do A first)
   B6 unbounded play: (input i) slots + rerun()         [engine, small]   done
      compile (tick) once, rerun per frame; no code[] growth (1e6 ticks ok)
 
-Engine work for a real-time terminal game is COMPLETE. What's left is optional:
-  - xterm.js flavour of the driver                     [host, medium]
+  B7 xterm.js flavour (web/game.html)                  [host, small]    done
+     browser keys -> input slots -> rerun -> term.write
+
+Engine work for a real-time terminal game is COMPLETE; so is a browser flavour.
+Only optional work remains:
   - strheap mark-compactor for persistent-string churn [engine, medium] (ADR-004)
     — a transient-per-frame game never hits this.
 ```
