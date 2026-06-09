@@ -152,6 +152,60 @@ Not lifting any specific implementation idea — the article is about the
 pointer for the "research artifact or product?" decision, not as a
 roadmap input.
 
+## IOCCC 2025/cable — "a virtual machine in 366 bytes of C"
+
+https://www.ioccc.org/2025/cable/index.html
+
+Filed 2026-06-09 from `docs/project_incoming/virtual-machine-366-bytes-c.md`
+(exploratory "any overlap with us?" task). The entry is a **SUBLEQ** machine
+— a one-instruction-set computer (OISC) whose single instruction is
+`m[b] -= m[a]; if (m[b] <= 0) goto c;` with low-bit-tagged operands selecting
+indirect addressing. 32-bit, 1.5 GB RAM, SDL3-backed framebuffer, and it boots
+Linux and runs DOOM. The 366 bytes is *only the interpreter*; the OS + DOOM
+arrive as a precompiled `vmlinux.bootimage` blob of SUBLEQ words produced by a
+custom LLVM backend + softfloat + a Linux port. The napkin-sized C is real; the
+ecosystem behind the blob is enormous.
+
+**The framing it sharpens — interpreter size is not where the cost lives.**
+This is the same lesson our project keeps re-learning from the other vantage
+(speed), now stated for size. wallisp's tell is the inverse of cable's: our
+*source* is small-ish (438–929 LOC per engine) but the **work is in the
+engine**, whereas cable's source is microscopic and the work is **pushed into
+the producer** (the LLVM→SUBLEQ toolchain + the bootimage). Both are the
+"complexity is conserved, you only choose *where* it sits" observation that
+already runs through DEV.md's compiler↔VM decoupling seam — cable just takes it
+to the asymptote: a VM so small the entire semantics of the target programs
+live in the compiled data, not the interpreter.
+
+**The one concrete tie — SUBLEQ is the limit case of our bytecode ISA story,
+from the opposite end that tinylisp's `gc()` anchors.** Our bytecode line moves
+*up* the ISA (superinstructions: `OP_PADD…` fold prim dispatch into dedicated
+opcodes, measured 1.6× faster / 18% fewer instructions — DEV.md). SUBLEQ is the
+floor: one opcode, zero dispatch, semantics shoved entirely into the operand
+stream. The interesting wallisp-shaped question it *poses* (not one we should
+chase) is the dispatch-cost extreme — a single-instruction VM has no `br_table`
+to specialize, so V8's whole "each arm optimizes independently" finding
+(`wasm_dispatch.md`) has nothing to bite on; the loop is pure data-driven
+arithmetic. That's a different measurement axis from anything in FINDINGS, and
+filed only as a note, not a hypothesis.
+
+**Why it is NOT an engine inspiration for us (and we should not port it):**
+- **Wrong altitude.** wallisp measures *interpreter design choices for a Lisp*
+  (env representation, GC barrier, tail-call shape). A SUBLEQ core erases all of
+  those — there's no env, no cons, no GC, nothing the project's eight-engine
+  matrix exists to compare. Porting it would be a different project.
+- **The size win is relocation, not reduction.** 366 bytes only looks small
+  because the toolchain + bootimage are off-screen. Our "small" is honest LOC
+  you can read end to end; adopting cable's accounting would be the opposite of
+  the project's measure-don't-hide ethos.
+- **No wasm/V8 story.** The IOCCC point is byte-golf of C source under a size
+  cap; ours is *runtime* behavior under clang→wasm→V8. Different arbiter
+  entirely (the CLAUDE.md "V8's JIT is the real arbiter, not source size"
+  trap names exactly this confusion).
+
+Net: a sharp **framing** entry (complexity-relocation; the OISC floor of the ISA
+spectrum our bytecode engines sit on), not a roadmap or engine input. No ticket.
+
 ## What we explicitly chose NOT to take
 
 - **mal's 11-step pedagogical structure.** Good for "learn to write a Lisp,"
@@ -165,3 +219,7 @@ roadmap input.
   story and 32-bit tagged words are the design point.
 - **tinylisp's atoms-in-the-cell-buffer.** Shaves bytes; complicates the
   arena invariants the GC engines depend on.
+- **IOCCC/cable's SUBLEQ core.** Wrong altitude — a one-instruction machine
+  erases the env/cons/GC/tail-call axes the eight-engine matrix exists to
+  measure; its 366-byte source relocates complexity into an off-screen
+  toolchain rather than reducing it. Kept as a framing note, not an engine.
