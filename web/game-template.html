@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>wallisp — TUI game (xterm.js)</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
 <style>
@@ -10,8 +11,9 @@
          display: flex; flex-direction: column; align-items: center; gap: 0.9em; }
   h1 { font-size: 1.05em; font-weight: 700; margin: 0; letter-spacing: .02em; }
   .sub { color: #8a807a; font-size: 0.85em; max-width: 44em; text-align: center; }
-  #term { width: 360px; }
-  .bar { color: #8a807a; font-size: 0.82em; display: flex; gap: 1.4em; }
+  #term { max-width: 100%; }
+  .bar { color: #8a807a; font-size: 0.82em; display: flex; gap: 1.4em;
+         flex-wrap: wrap; justify-content: center; }
   .bar b { color: #e0894a; font-weight: 600; }
   kbd { background: #2a2420; border: 1px solid #3a332d; border-radius: 4px;
         padding: 0 .4em; color: #d6cfc6; font-size: .9em; }
@@ -25,6 +27,19 @@
              padding: 1em 1.1em; margin: .5em 0 0; overflow: auto; max-height: 60vh;
              font-size: 12.5px; line-height: 1.5; color: #cfc7bd; white-space: pre; }
   pre.code .cmt { color: #6f6258; }
+  /* touch D-pad — there's no keyboard on a phone; shown only on touch devices */
+  #pad { display: none; flex-direction: column; align-items: center; gap: .5em; }
+  #pad .pad-mid { display: flex; gap: 3em; }
+  #pad button { width: 56px; height: 56px; font-size: 1.4em; border-radius: 12px;
+                border: 1px solid #3a332d; background: #221d19; color: #e0894a;
+                touch-action: manipulation; cursor: pointer; }
+  #pad button:active { background: #2e2722; }
+  @media (pointer: coarse) { #pad { display: flex; } }
+  @media (max-width: 560px) {
+    body { padding: 1.2em .8em 2em; gap: .7em; }
+    h1 { font-size: .95em; }
+    .sub { font-size: .8em; }
+  }
 </style>
 </head>
 <body>
@@ -40,6 +55,14 @@
 <div class="bar">
   <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows — move</span>
   <span id="status">loading…</span>
+</div>
+<div id="pad" role="group" aria-label="touch controls">
+  <button data-dx="0" data-dy="-1" aria-label="up">↑</button>
+  <div class="pad-mid">
+    <button data-dx="-1" data-dy="0" aria-label="left">←</button>
+    <button data-dx="1" data-dy="0" aria-label="right">→</button>
+  </div>
+  <button data-dx="0" data-dy="1" aria-label="down">↓</button>
 </div>
 <details>
   <summary>show game code — examples/coin2d.lisp</summary>
@@ -79,8 +102,9 @@ const GAME_LISP = @@GAME_LISP@@;
     return readOut(ex.rerun(entry));
   };
 
+  const fontSize = window.matchMedia("(max-width: 560px)").matches ? 22 : 18;
   const term = new Terminal({
-    cols: 14, rows: 8, fontSize: 18, cursorStyle: "underline", cursorBlink: false,
+    cols: 14, rows: 8, fontSize, cursorStyle: "underline", cursorBlink: false,
     theme: { background: "#14110f", foreground: "#d6cfc6", cursor: "#14110f" },
   });
   term.open(document.getElementById("term"));
@@ -90,6 +114,8 @@ const GAME_LISP = @@GAME_LISP@@;
   // frame so it redraws in place (frame is small — no perceptible flicker).
   const draw = (f) => term.write("\x1b[2J\x1b[H" + f.replace(/\n/g, "\r\n"));
 
+  const move = (dx, dy) => draw(frame(dx, dy));
+
   const MOVES = {
     ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
     w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0],
@@ -98,7 +124,13 @@ const GAME_LISP = @@GAME_LISP@@;
     const mv = MOVES[domEvent.key];
     if (!mv) return;
     domEvent.preventDefault();
-    draw(frame(mv[0], mv[1]));
+    move(mv[0], mv[1]);
+  });
+  // Touch D-pad (mobile): same move path, but don't focus the terminal so the
+  // on-screen keyboard stays down.
+  document.getElementById("pad").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (b) move(+b.dataset.dx, +b.dataset.dy);
   });
 
   draw(frame(0, 0));
