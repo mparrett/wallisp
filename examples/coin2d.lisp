@@ -13,12 +13,13 @@
 
 ; state = (px py cx cy score seed)
 (define (mk px py cx cy sc sd) (cons px (cons py (cons cx (cons cy (cons sc (cons sd ())))))))
-(define (g-px s) (car s))
-(define (g-py s) (car (cdr s)))
-(define (g-cx s) (car (cdr (cdr s))))
-(define (g-cy s) (car (cdr (cdr (cdr s)))))
-(define (g-sc s) (car (cdr (cdr (cdr (cdr s))))))
-(define (g-sd s) (car (cdr (cdr (cdr (cdr (cdr s)))))))
+(define (nth n l) (if (= n 0) (car l) (nth (- n 1) (cdr l))))
+(define (g-px s) (nth 0 s))
+(define (g-py s) (nth 1 s))
+(define (g-cx s) (nth 2 s))
+(define (g-cy s) (nth 3 s))
+(define (g-sc s) (nth 4 s))
+(define (g-sd s) (nth 5 s))
 
 (define (cl v hi) (cond ((< v 0) 0) ((< hi v) hi) (else v)))
 
