@@ -15,6 +15,16 @@
   .bar b { color: #e0894a; font-weight: 600; }
   kbd { background: #2a2420; border: 1px solid #3a332d; border-radius: 4px;
         padding: 0 .4em; color: #d6cfc6; font-size: .9em; }
+  details { width: min(92vw, 640px); margin-top: .3em; }
+  summary { cursor: pointer; color: #e0894a; font-size: .82em; list-style: none;
+            user-select: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: "▸ "; }
+  details[open] summary::before { content: "▾ "; }
+  pre.code { background: #1b1714; border: 1px solid #2a2420; border-radius: 8px;
+             padding: 1em 1.1em; margin: .5em 0 0; overflow: auto; max-height: 60vh;
+             font-size: 12.5px; line-height: 1.5; color: #cfc7bd; white-space: pre; }
+  pre.code .cmt { color: #6f6258; }
 </style>
 </head>
 <body>
@@ -31,6 +41,10 @@
   <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows — move</span>
   <span id="status">loading…</span>
 </div>
+<details>
+  <summary>show game code — examples/coin2d.lisp</summary>
+  <pre class="code" id="code"></pre>
+</details>
 
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
 <script>
@@ -89,6 +103,13 @@ const GAME_LISP = @@GAME_LISP@@;
 
   draw(frame(0, 0));
   status.textContent = "ready — click the grid and play";
+
+  // Show the exact source the VM is running (GAME_LISP), comments dimmed.
+  const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  document.getElementById("code").innerHTML = GAME_LISP.split("\n").map(line => {
+    const i = line.indexOf(";"); // coin2d.lisp has no ';' inside string literals
+    return i < 0 ? esc(line) : esc(line.slice(0, i)) + '<span class="cmt">' + esc(line.slice(i)) + "</span>";
+  }).join("\n");
 })().catch(e => {
   document.getElementById("status").textContent = "error: " + e.message;
 });
