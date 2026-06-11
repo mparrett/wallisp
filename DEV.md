@@ -163,7 +163,7 @@ exports `gc_count()`; the `bc_base/inline/super` builds export `icount()`
 (instructions dispatched). `harness/lisp-cli.mjs` is a minimal driver.
 
 `bytecode_gc.wasm` additionally exports a **persistent-session** pair
-(Milestone A — see `docs/project_notes/terminal_game_roadmap.md`):
+(Milestone A — see `docs/project_archived/terminal_game_roadmap.md`):
 `reset_session()` starts/clears a session and `eval_persistent(len)` evaluates
 while keeping globals, symbols, the cons arena, and the string heap across
 calls, so `(define x 5)` then `(+ x 1)` works across two calls. `eval_source`

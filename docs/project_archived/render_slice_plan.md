@@ -1,5 +1,10 @@
 # Render slice — raw frame output for the persistent session (plan + result)
 
+> **ARCHIVED 2026-06-10 — shipped.** The render capability (`display`) and the
+> per-frame string region-drop (`strheap-mark`/`strheap-reset`) landed in
+> `bytecode_gc`; ADR-004 in `docs/project_notes/decisions.md` records the
+> decision. Kept as the pre-registration + measurement record.
+
 **Pre-registered 2026-06-08. Implemented + measured same day — prediction
 CONFIRMED (see "Result" at the bottom).** Next engine slice on the
 terminal/game roadmap (`terminal_game_roadmap.md`, ADR-003), chosen over the

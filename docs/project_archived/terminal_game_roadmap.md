@@ -1,5 +1,11 @@
 # Terminal / TUI-game roadmap (2026-06-08)
 
+> **ARCHIVED 2026-06-10 — fully shipped.** Every milestone below is `[DONE]`:
+> persistent session, render slice, unbounded play, and both a terminal and an
+> xterm.js browser flavour. Kept as the slice-by-slice record of how it was
+> built. The "how it works" summary now lives in `DEV.md`; the rationale is
+> ADRs 003–005 in `docs/project_notes/decisions.md`.
+
 > High-level roadmap for taking wallisp from a one-shot expression evaluator to
 > an interactive terminal experience, and eventually an xterm.js TUI game.
 > Triggered by a partner-team pointer doc dropped in
