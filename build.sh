@@ -11,6 +11,18 @@ cd "$(dirname "$0")"
 WANT_NATIVE=0
 [ "${1:-}" = "--native" ] && WANT_NATIVE=1
 
+# Preflight: the wasm build needs a clang with the wasm32 backend + wasm-ld.
+# Apple's /usr/bin/clang has neither — on macOS you need Homebrew LLVM. Fail
+# with that hint instead of a raw "unknown target" error mid-build.
+command -v clang >/dev/null || { echo "error: clang not found" >&2; exit 1; }
+if ! clang --print-targets 2>/dev/null | grep -q wasm32; then
+  echo "error: this clang has no wasm32 target." >&2
+  echo "  macOS: brew install llvm lld, then prepend it to PATH:" >&2
+  echo '    export PATH="$(brew --prefix llvm)/bin:$PATH"' >&2
+  exit 1
+fi
+command -v wasm-ld >/dev/null || { echo "error: wasm-ld not found (install LLVM's lld)" >&2; exit 1; }
+
 # -fno-builtin on all engines: keeps modules zero-imports (the project's headline
 # property). Without it, newer clang (LLVM 20+) synthesizes calls to strlen for
 # reader patterns and memset for large arena zero-init, both of which would become
@@ -67,7 +79,8 @@ console.log(`  ✓ ${mods.length}/${mods.length} modules import zero symbols`);
 
 if [ "$WANT_NATIVE" = "1" ]; then
   echo "native binaries (no wasm, no JIT — direct C measurement):"
-  NFLAGS="-O2 -I. -Wno-unknown-attributes -Wno-ignored-attributes -Wno-macro-redefined"
+  # -Iengines so the big-arena temp source (in /tmp) still finds reader.h.
+  NFLAGS="-O2 -I. -Iengines -Wno-unknown-attributes -Wno-ignored-attributes -Wno-macro-redefined"
   # Bench uses a big-arena engine variant (matches the wasm *_big.wasm builds, so
   # native vs wasm timings are apples-to-apples and no-GC engines don't bail on
   # heavy benchmarks). CLI uses the default-arena engine for fast load + small

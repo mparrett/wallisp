@@ -8,7 +8,7 @@
 set -u
 
 CLI="${CLI:-./native_cli_lisp}"
-[ -x "$CLI" ] || { echo "missing $CLI — run ./build.sh first" >&2; exit 2; }
+[ -x "$CLI" ] || { echo "missing $CLI — run ./build.sh --native first (native CLIs need --native)" >&2; exit 2; }
 
 pass=0
 fail=0

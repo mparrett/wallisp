@@ -35,6 +35,20 @@ const ENGINES = [
   ['bytecode_gc', 'bytecode_gc.wasm',          true],
 ];
 
+// The *_big.wasm variants are build artifacts (not checked in), unlike the
+// default *.wasm the other harnesses load. Fail early with a clear hint rather
+// than a raw ENOENT if someone runs bench on a fresh clone.
+{
+  const missing = ENGINES
+    .map(([, f]) => f)
+    .filter(f => !fs.existsSync(new URL('../' + f, import.meta.url)));
+  if (missing.length) {
+    console.error(`bench needs big-arena builds that aren't checked in: ${missing.join(', ')}`);
+    console.error('Run `bash build.sh` first (it emits the *_big.wasm variants).');
+    process.exit(1);
+  }
+}
+
 // Each: [name, shape-it-stresses, lisp-source]
 const BENCHMARKS = [
   ['fib(24)', 'deep non-tail recursion, scalar arithmetic, no allocation',

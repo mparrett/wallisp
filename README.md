@@ -16,6 +16,8 @@ node harness/lisp-cli.mjs -e "(begin (define fib (lambda (n) (if (< n 2) n (+ (f
 
 Prebuilt `*.wasm` modules are checked in at the repo root, so the harness and CLI work without running `build.sh` first.
 
+**Prerequisites:** Node (any recent version) runs the harness and the checked-in modules. To *build*, you need a clang with the `wasm32` target plus `wasm-ld` — on macOS that means Homebrew LLVM (`brew install llvm lld`), since Apple's `/usr/bin/clang` has no wasm backend; put it on your `PATH` with `export PATH="$(brew --prefix llvm)/bin:$PATH"`. There's a `justfile` if you have [`just`](https://github.com/casey/just): `just test` runs the core suites, `just test-all` runs everything, `just bench` builds and benchmarks.
+
 `harness/bench.mjs` also prints a **baselines** table: the same five benchmarks hand-written in JS (V8 native) and C (`-O2` native), no interpreter. The C row needs `bash build.sh --native` to produce `native_bench_baseline`; standalone equivalents live in `baselines/bench.{js,c}`.
 
 ## What this is, and what it isn't
