@@ -7,7 +7,7 @@
 > H8's prediction is about workload *shape* — the choice of evaluator
 > implementation doesn't change the finding direction.
 
-The handoff `HANDOFF_2026-06-01_tier-b-exps-falsified` left this question
+An earlier (2026-06-01) tier-B handoff left this question
 open: *does `bytecode_gc`'s post-PR1 advantage over `bytecode` (and over the
 tree-walker) generalize beyond direct `fib`?* The natural way to test is a
 **different-shape workload** that exercises different code paths — and the
