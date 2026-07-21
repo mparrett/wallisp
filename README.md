@@ -1,5 +1,7 @@
 # wallisp — tiny Lisp → WebAssembly
 
+*wallisp* — a **W**eb**A**ssembly **L**ittle **L**isp, implemented eight ways and measured.
+
 A small Lisp implemented eight ways across three architectures (tree-walker,
 CEK machine, bytecode VM) and three GC strategies (none, mark-sweep,
 region-drop), compiled to freestanding `wasm32` with **zero imports**, then
