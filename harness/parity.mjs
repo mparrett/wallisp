@@ -73,6 +73,14 @@ const PROGRAMS = [
   '(let ((x 5) (y 7)) (+ x y))',
   '(let ((x 1)) (let ((y 2)) (+ x y)))',
 
+  // reader sugar: fn(a, b) ≡ (fn a b), from the shared reader.h. Covered on the
+  // wasm engines here — the native-only reader_sugar.sh doesn't exercise these.
+  '(begin (define add (lambda (x y) (+ x y))) add(2, 3))',
+  '(begin (define add (lambda (x y) (+ x y))) add(add(1, 2), 3))',
+  '(begin (define sq (lambda (x) (* x x))) sq(4))',
+  '(begin (define k (lambda () 42)) k())',
+  'car((quote (7 8 9)))',
+
   // lambda + closures
   '((lambda (x) (* x x)) 9)',
   '((lambda (x y) (+ x y)) 3 4)',
