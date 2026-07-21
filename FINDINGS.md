@@ -41,7 +41,7 @@ real constant-factor win, not noise. CEK is ~2.2x *slower* than the tree-walker
    call, set `ast` and `env` then `continue` instead of recursing." Our
    `lisp.c` doesn't have that loop. clang's -O2 TRE writes it for us. mal's
    step 5 is an explicit version of what clang did implicitly here. (See
-   `docs/project_notes/external_inspirations.md` for the wider comparison.)
+   `docs/notes/external_inspirations.md` for the wider comparison.)
 
 2. **CEK's one exclusive win is deep NON-tail recursion.** `sum(10000)` with
    `(+ n (sum ...))` cannot be looped by any optimizer. The tree-walker
@@ -582,7 +582,7 @@ of armchair argument the env-lookup hotspot hypothesis (above) made for
 the tree-walker, where the speedup turned out to be ~5%. The wasm view
 (via `wasm2wat`, dispatch loop is a tight 12-arm `br_table`) confirms
 V8 already specializes the LOADG arm hard. Filed in
-`docs/project_notes/bytecode_disasm.md` and `wasm_dispatch.md` with
+`docs/notes/bytecode_disasm.md` and `wasm_dispatch.md` with
 both snapshots; "would a faster mcapply primitive dispatch actually
 help?" is left as a pre-registered prediction (we predict <10% speedup)
 rather than a recommendation.
@@ -1282,7 +1282,7 @@ would need the explicit trampoline; for us, the two are interchangeable.
 
 ## PR1a — primitive validation tax on the tree-walker (`lisp.c`)
 
-The audit in `docs/project_notes/legs_vs_toy_audit.md` called out the
+The audit in `docs/notes/legs_vs_toy_audit.md` called out the
 "silent garbage on bad prim args" footgun: `(+ 1)` → `1`, `(+ 'a 1)` → empty,
 `(car 5)` → `()`. The PR1 series fixes this across all eight engines; PR1a
 is the pilot on `lisp.c` alone, with `harness/parity.mjs` gating the new
@@ -1595,7 +1595,7 @@ inline-prim's amortized advantage on prim-heavy workloads.
 
 ## PR2a — mutation (`set!` / `set-car!` / `set-cdr!`) on `lisp.c`
 
-Tier A item 2 from `docs/project_notes/gap_closure_plan.md`. Lifts the
+Tier A item 2 from `docs/notes/gap_closure_plan.md`. Lifts the
 language from "purely functional accident" to "mutable Lisp" — programs
 that need a memoization cache, an accumulator, or any kind of shared
 state can now be written. PR2a pilots on `engines/lisp.c`; PR2b ports to
@@ -1932,7 +1932,7 @@ not PR2c helping. The signal is that PR2c is comfortably within
 
 ## H7 — does CEK finally win with `call/cc`? (FALSIFIED)
 
-Pre-registered (`docs/project_notes/gap_closure_plan.md` EXP2): CEK's K
+Pre-registered (`docs/notes/gap_closure_plan.md` EXP2): CEK's K
 continuation is already first-class internally; exposing it as `call/cc`
 should be cheap. Predicted ratio: `cek_callcc_generator /
 bytecode_gc_explicit ≤ 1.5×`. Upside falsification (CEK exclusively wins)
@@ -2066,7 +2066,7 @@ But "work" is not "fast."
 
 ## H6 — non-uniform heap GC tax on `bytecode_gc.c` (FALSIFIED, lower window)
 
-Pre-registered (`docs/project_notes/gap_closure_plan.md` EXP1): adding a
+Pre-registered (`docs/notes/gap_closure_plan.md` EXP1): adding a
 separate string heap with a type-tagged sweep loop to `bytecode_gc.c`
 will raise the fib(24) GC tax from its post-PR1c baseline to 1.15–1.30×
 because V8 loses specialisation on `gc()` once it grows a non-uniform
@@ -2211,7 +2211,7 @@ to its own code path. Bundling them under "GC tax" hides the structure.
 
 ## H8 — does bytecode_gc's win generalize to metacircular eval? (FALSIFIED, preserves direction)
 
-Pre-registered (`docs/project_notes/h8_metacircular_preregistration.md`,
+Pre-registered (`docs/notes/h8_metacircular_preregistration.md`,
 2026-06-04): on a metacircular `fib(N)` — a wallisp interpreter written
 in wallisp, running the guest fib — the `bytecode_gc / lisp` wasm ratio
 should *narrow* from direct fib(24)'s ~0.30-0.43× into the band
@@ -2340,8 +2340,8 @@ bigger move than removing one layer of dispatch.
 
 > Context-honest disclosure: H9 was an exploratory session prompted by
 > an external "comptime specializer" code drop in
-> `docs/project_incoming/2026-06-04.md` and
-> `docs/project_incoming/comptime-2026-06-04.c`. The pre-registered
+> `docs/notes/2026-06-04.md` and
+> `docs/notes/comptime-2026-06-04.c`. The pre-registered
 > prediction was stated in chat, not committed as a `feat_*.md` ticket
 > before measurement. The measurement is honest (same engine wasm
 > files, same V8, same harness pattern as `bench.mjs`), but the
@@ -2484,7 +2484,7 @@ produce identical output.
 
 > Context-honest disclosure: like H9, H10 came out of the same
 > 2026-06-04 exploratory session prompted by the
-> `docs/project_incoming/comptime-2026-06-04.c` drop. Pre-reg lives
+> `docs/notes/comptime-2026-06-04.c` drop. Pre-reg lives
 > in the session transcript, not a `feat_*.md`. Magnitude here is
 > *reuse-dependent* in a way H9's wasn't — see "what this is NOT"
 > below.
@@ -2594,7 +2594,7 @@ The argument for hard-fail over soft-fail (decided pre-build):
    (fine)" from "actual bug (not fine)" — that's the harder code.
 
 Convergent signal: `barrier()` in
-`docs/project_incoming/comptime-2026-06-04.c`, Zig's `comptime`, C++
+`docs/notes/comptime-2026-06-04.c`, Zig's `comptime`, C++
 `constexpr` all chose hard-fail. The pattern won by convergence
 across multiple language designs.
 
@@ -2723,7 +2723,7 @@ runtime arena and a more careful comptime/runtime value boundary.
 
 ## H11 — branchless predicate primitives in `bytecode_gc.c` (FALSIFIED, wrong direction)
 
-Pre-registered 2026-06-06 (`docs/project_notes/h11_branchless_predicates_preregistration.md`).
+Pre-registered 2026-06-06 (`docs/notes/h11_branchless_predicates_preregistration.md`).
 Motivated by a brief look at branchless quicksort — replacing `cond ? TRUE :
 NIL` ternary returns inside JIT-hot br_table arms with arithmetic
 `mkspec(SP_NIL + cond)` (exploiting `SP_T = SP_NIL + 1`). The pre-reg's null
@@ -2807,7 +2807,7 @@ less-cheap thing.
 - **V8's wasm SELECT lowering can be better than hand-rolled arithmetic
   when both target constants are small.** This is consistent with the
   prior finding that V8 hard-specialises the LOADG-OF-CONSTANT path
-  (`docs/project_notes/bytecode_disasm.md:75-78`) — the same kind of
+  (`docs/notes/bytecode_disasm.md:75-78`) — the same kind of
   constant-aware specialisation extends to predicate returns inside
   br_table arms.
 - The branchless-arithmetic technique pays where the alternative is
@@ -2821,5 +2821,5 @@ less-cheap thing.
   codebase.
 
 Edits reverted. Pre-reg note preserved at
-`docs/project_notes/h11_branchless_predicates_preregistration.md` as
+`docs/notes/h11_branchless_predicates_preregistration.md` as
 the record of the experiment.

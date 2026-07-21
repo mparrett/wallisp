@@ -163,7 +163,7 @@ exports `gc_count()`; the `bc_base/inline/super` builds export `icount()`
 (instructions dispatched). `harness/lisp-cli.mjs` is a minimal driver.
 
 `bytecode_gc.wasm` additionally exports a **persistent-session** pair
-(Milestone A — see `docs/project_archived/terminal_game_roadmap.md`):
+(Milestone A — see `docs/notes/terminal_game_roadmap.md`):
 `reset_session()` starts/clears a session and `eval_persistent(len)` evaluates
 while keeping globals, symbols, the cons arena, and the string heap across
 calls, so `(define x 5)` then `(+ x 1)` works across two calls. `eval_source`
@@ -202,7 +202,7 @@ questions:
   bytecode_gc.wasm`. The big run-loop `switch` compiles to a single
   `br_table` over 12 opcodes; each arm specializes independently in V8.
 
-See `docs/project_notes/bytecode_disasm.md` and `wasm_dispatch.md` for
+See `docs/notes/bytecode_disasm.md` and `wasm_dispatch.md` for
 the writeup of what we found inspecting the metacircular eval. Notable:
 the bytecode-count share of `LOADG` looks alarmingly dominant (32%),
 but the wasm view shows V8 already specializes those arms tight — the

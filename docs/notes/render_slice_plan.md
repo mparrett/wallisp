@@ -2,7 +2,7 @@
 
 > **ARCHIVED 2026-06-10 — shipped.** The render capability (`display`) and the
 > per-frame string region-drop (`strheap-mark`/`strheap-reset`) landed in
-> `bytecode_gc`; ADR-004 in `docs/project_notes/decisions.md` records the
+> `bytecode_gc`; ADR-004 in `docs/notes/decisions.md` records the
 > decision. Kept as the pre-registration + measurement record.
 
 **Pre-registered 2026-06-08. Implemented + measured same day — prediction

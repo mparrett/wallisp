@@ -44,7 +44,7 @@ node harness/repl.mjs < examples/06_game_session.lisp     # final score: 2
 ```
 
 A coin-collector where each `(go ±1)` is one turn and the RNG is threaded
-through the state tuple — see `docs/project_archived/terminal_game_roadmap.md`
+through the state tuple — see `docs/notes/terminal_game_roadmap.md`
 (Milestone A validation). The REPL is line-oriented, so each form stays on one
 line.
 

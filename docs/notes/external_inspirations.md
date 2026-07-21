@@ -39,12 +39,12 @@ MAX_CELLS shape vs region-drop's compare-with-zero). Region-drop
 eliminates the mark-sweep tax AND a bit more. See FINDINGS.md "H2 zero
 floor — region-drop GC" and the ticket below for details.
 
-- See `docs/project_incoming/feat_region_drop_gc.md` (status: done)
+- See `docs/notes/feat_region_drop_gc.md` (status: done)
 
 The other lift worth considering — special forms as primitives in the same
 dispatch table — is its own structural refactor:
 
-- See `docs/project_incoming/refactor_special_forms_as_primitives.md`
+- See `docs/notes/refactor_special_forms_as_primitives.md`
 
 ## kanaka/mal — "Make a Lisp"
 
@@ -74,7 +74,7 @@ Two framings we picked up from reading the guide:
    9840. clang's -O2 TRE is doing exactly the transformation mal step
    5 prescribes. See FINDINGS.md "H1 verification — explicit trampoline
    tree-walker" and the ticket below.
-   - `docs/project_incoming/feat_lisp_trampoline.md` (status: done)
+   - `docs/notes/feat_lisp_trampoline.md` (status: done)
 
 2. **The "deferrable" pattern as hypothesis-progression.** mal's guide
    marks features as deferrable until later steps make them necessary.
@@ -106,7 +106,7 @@ its own evaluator at a non-embarrassing speed, and whether the engine
 ordering on direct fib mirrors the ordering on metacircular fib. The
 constant-vs-varying-tax question is the empirical hook.
 
-- See `docs/project_incoming/feat_metacircular_eval.md`
+- See `docs/notes/feat_metacircular_eval.md`
 
 What we are *not* lifting from the talk:
 
@@ -156,7 +156,7 @@ roadmap input.
 
 https://www.ioccc.org/2025/cable/index.html
 
-Filed 2026-06-09 from `docs/project_incoming/virtual-machine-366-bytes-c.md`
+Filed 2026-06-09 from `docs/notes/virtual-machine-366-bytes-c.md`
 (exploratory "any overlap with us?" task). The entry is a **SUBLEQ** machine
 — a one-instruction-set computer (OISC) whose single instruction is
 `m[b] -= m[a]; if (m[b] <= 0) goto c;` with low-bit-tagged operands selecting

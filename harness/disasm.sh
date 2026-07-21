@@ -11,7 +11,7 @@
 #   node harness/disasm.mjs baselines/metacircular.lisp
 #
 # See FINDINGS.md "Bytecode shape — what the metacircular compiles to" and
-# docs/project_notes/bytecode_disasm.md for the analysis.
+# docs/notes/bytecode_disasm.md for the analysis.
 
 set -e
 cd "$(dirname "$0")/.."

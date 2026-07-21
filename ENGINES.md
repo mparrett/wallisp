@@ -54,7 +54,7 @@ they don't OOM on heavy benchmarks; the GC engines use their default arenas
 (262K) deliberately so collection is meaningful. Source lines are the engine
 file alone; the printer/primitives are still duplicated across files (each
 engine remains a single TU — keeps the A/B honest). The reader was shared
-into `engines/reader.h` via `#include` (see `docs/project_notes/shared_reader_plan.md`).
+into `engines/reader.h` via `#include` (see `docs/notes/shared_reader_plan.md`).
 
 ## Capabilities by architecture
 

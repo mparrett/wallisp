@@ -85,7 +85,7 @@ re-tail-call `eval_expr` (the GC variant roots the in-flight nested-if via
 ## ADR-003: Path to an interactive terminal / TUI-game experience (2026-06-08)
 
 **Context**: A partner team (xsofy + let-go) dropped a pointer doc in
-`docs/project_incoming/tui-game-pointers-from-xsofy-letgo-2026-06-08.md` —
+`docs/notes/tui-game-pointers-from-xsofy-letgo-2026-06-08.md` —
 lessons from shipping a TUI roguelike on a homegrown Lisp. It prompted the
 question: how far is wallisp from offering (a) a terminal REPL experience and
 (b) an xterm.js TUI game?

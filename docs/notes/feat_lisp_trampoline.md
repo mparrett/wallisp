@@ -47,7 +47,7 @@ makes the tree-walker flat; clang either does it or we do it, and either
 way the cost is the same." If they differ, we learn something specific
 about what -O2 was contributing beyond TRE.
 
-See `docs/project_notes/external_inspirations.md` for the wider mal/wallisp
+See `docs/notes/external_inspirations.md` for the wider mal/wallisp
 comparison this ticket lives within.
 
 ## Sketch

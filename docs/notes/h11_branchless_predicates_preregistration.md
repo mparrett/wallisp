@@ -47,10 +47,10 @@ column against its own baseline; the other engines act as control rows.
 
 ## The mechanism model being tested
 
-Prior data points (FINDINGS.md and `docs/project_notes/bytecode_disasm.md`):
+Prior data points (FINDINGS.md and `docs/notes/bytecode_disasm.md`):
 
 - The bytecode dispatch loop already compiles to a single 12-arm `br_table`
-  (`docs/project_notes/wasm_dispatch.md`). V8 has clean per-arm code to
+  (`docs/notes/wasm_dispatch.md`). V8 has clean per-arm code to
   specialize.
 - Env-as-array (a related "remove a tight branch chain" change) shipped at
   ~5% on direct fib — cited as evidence that V8 specializes the

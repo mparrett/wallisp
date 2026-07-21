@@ -59,8 +59,8 @@ bash web/build-game.sh                         # regenerate web/game.html, then 
 The path there (persistent session, raw frame output, an O(1) per-frame string
 region-drop, and run-without-recompile for unbounded play) is recorded slice by
 slice in
-**[docs/project_archived/terminal_game_roadmap.md](docs/project_archived/terminal_game_roadmap.md)**
-(with ADRs 003–005 in `docs/project_notes/decisions.md`).
+**[docs/notes/terminal_game_roadmap.md](docs/notes/terminal_game_roadmap.md)**
+(with ADRs 003–005 in `docs/notes/decisions.md`).
 
 ## Learn more
 

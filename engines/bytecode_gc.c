@@ -868,7 +868,7 @@ static u32 run_buffer(){
   // Build with -DDISASM_ONLY -DOUTCAP=262144 to dump the compiled bytecode
   // instead of executing. Used by harness/disasm.sh + harness/disasm.mjs to
   // inspect what the compiler emits for a given source program. See
-  // docs/project_notes/bytecode_disasm.md and FINDINGS.md "Bytecode shape".
+  // docs/notes/bytecode_disasm.md and FINDINGS.md "Bytecode shape".
   u32 p=0;
   while(p<cp){
     u32 addr=p;

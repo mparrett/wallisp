@@ -288,7 +288,7 @@ footer a { color: var(--ink-soft); border-bottom-color: var(--border); }
 <details>
 <summary><h2><span class="section-num">1</span>Setup &mdash; when the eval loop <em>is</em> the cost</h2></summary>
 
-<p>The bytecode VM&rsquo;s hot loop dispatches through a <code>br_table</code> over 14 opcodes. V8 specializes each arm hard &mdash; we&rsquo;d already verified this in the wasm-dispatch study (see <code>docs/project_notes/wasm_dispatch.md</code>). The per-opcode cost is genuinely small. So removing dispatch shouldn&rsquo;t buy much: bytecode is already 2.5&times; faster than the tree-walker, and that&rsquo;s the dispatch-removal layer.</p>
+<p>The bytecode VM&rsquo;s hot loop dispatches through a <code>br_table</code> over 14 opcodes. V8 specializes each arm hard &mdash; we&rsquo;d already verified this in the wasm-dispatch study (see <code>docs/notes/wasm_dispatch.md</code>). The per-opcode cost is genuinely small. So removing dispatch shouldn&rsquo;t buy much: bytecode is already 2.5&times; faster than the tree-walker, and that&rsquo;s the dispatch-removal layer.</p>
 
 <p>The optimization ladder confirmed the diminishing-returns story. Each rung trades generality for speed:</p>
 

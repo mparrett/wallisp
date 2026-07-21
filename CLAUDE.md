@@ -38,12 +38,14 @@ If building by hand instead of via `build.sh`:
 - `bytecode_gc.c` needs **`-fno-builtin`** (defines its own `memset` / `memcpy`).
   The tell when this is missing is an undefined-`memset` link error.
 
-## Project Memory
+## Project notes
 
-Memory files live in `docs/project_notes/`.
+Project notes and design records live in `docs/notes/` — read and update these:
 
 **Before proposing changes**: Check `decisions.md` for existing ADRs
 **When encountering errors**: Search `bugs.md` for known solutions
 **When looking up config**: Check `key_facts.md` for ports, URLs, environments
 
-When resolving bugs or making decisions, update the relevant file.
+When resolving bugs or making decisions, update the relevant file. Older
+session material (handoffs, review transcripts) is archived outside this repo
+and available on request.

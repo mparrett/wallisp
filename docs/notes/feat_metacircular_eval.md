@@ -46,7 +46,7 @@ interpretation.** What does it cost to host a Lisp evaluator inside a
 Lisp evaluator? Does the engine ordering on direct fib mirror the
 ordering on metacircular fib?
 
-Reference: `docs/project_notes/external_inspirations.md` — "William E. Byrd
+Reference: `docs/notes/external_inspirations.md` — "William E. Byrd
 — The Most Beautiful Program Ever Written" entry, where this idea came in.
 
 ## Why interesting

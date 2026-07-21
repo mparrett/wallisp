@@ -4,12 +4,12 @@
 > persistent session, render slice, unbounded play, and both a terminal and an
 > xterm.js browser flavour. Kept as the slice-by-slice record of how it was
 > built. The "how it works" summary now lives in `DEV.md`; the rationale is
-> ADRs 003–005 in `docs/project_notes/decisions.md`.
+> ADRs 003–005 in `docs/notes/decisions.md`.
 
 > High-level roadmap for taking wallisp from a one-shot expression evaluator to
 > an interactive terminal experience, and eventually an xterm.js TUI game.
 > Triggered by a partner-team pointer doc dropped in
-> `docs/project_incoming/tui-game-pointers-from-xsofy-letgo-2026-06-08.md`
+> `docs/notes/tui-game-pointers-from-xsofy-letgo-2026-06-08.md`
 > (lessons from **xsofy** + **let-go**). The decision to pursue this as an
 > explicit opt-in track — and *how* — is ADR-003 in `decisions.md`. This
 > document is the roadmap; ADR-003 is the rationale.

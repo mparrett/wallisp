@@ -6,7 +6,7 @@
 ;
 ; Run on each engine to measure the metacircular tax (interpretation on top
 ; of interpretation). Compared against direct fib(N) in harness/bench.mjs.
-; See docs/project_incoming/feat_metacircular_eval.md for the predictions
+; See docs/notes/feat_metacircular_eval.md for the predictions
 ; this measurement is testing.
 ;
 ; The benchmark expression at the bottom evaluates to fib(N) = the wallisp

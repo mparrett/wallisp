@@ -42,7 +42,7 @@ LINE=$(awk '/br_table/{
   if(n>max){max=n; ln=NR}
 } END{print ln}' /tmp/bytecode_gc.wat)
 sed -n "$((LINE-15)),$((LINE+75))p" /tmp/bytecode_gc.wat \
-  > docs/project_notes/wasm_dispatch.excerpt.wat
+  > docs/notes/wasm_dispatch.excerpt.wat
 ```
 
 Pattern-based, not line-anchored, so it survives clang updates and

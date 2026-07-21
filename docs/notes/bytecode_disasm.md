@@ -134,8 +134,8 @@ go stale). To capture a copy next to this file:
 ```bash
 bash harness/disasm.sh
 node harness/disasm.mjs baselines/metacircular.lisp \
-  > docs/project_notes/bytecode_disasm.meta.txt
-wc -l docs/project_notes/bytecode_disasm.meta.txt   # expect ~374 lines
+  > docs/notes/bytecode_disasm.meta.txt
+wc -l docs/notes/bytecode_disasm.meta.txt   # expect ~374 lines
 ```
 
 The file is gitignored; re-run any time `baselines/metacircular.lisp`
