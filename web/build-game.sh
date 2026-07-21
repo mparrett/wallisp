@@ -5,8 +5,9 @@
 #
 #   bash web/build-game.sh
 #
-# The xterm.js library is loaded from a CDN; everything else is embedded, so the
-# output opens straight from file:// (or any static host).
+# The xterm.js library is loaded from a CDN; everything else (wasm + game) is
+# embedded. So the output opens from file:// (or any static host) but still
+# needs network for the xterm.js CDN — offline, the terminal stays blank.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

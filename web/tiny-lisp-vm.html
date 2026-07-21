@@ -359,7 +359,7 @@ async function runProgram(){
     const ms = performance.now() - t0;
     const out = new TextDecoder().decode(new Uint8Array(mem.buffer, ex.output_ptr(), n));
     const gc = ex.gc_count();
-    const isErr = out.indexOf("error") !== -1;
+    const isErr = out === "<error>";
     resultTile.classList.toggle("err", isErr);
     rOut.textContent = out;
     rMs.textContent = ms < 1 ? "<1 ms" : (ms<10? ms.toFixed(1) : Math.round(ms)) + " ms";
@@ -368,7 +368,7 @@ async function runProgram(){
     rGcSub.textContent = gc===0 ? "arena never filled" : "reclaimed "+fmt(gc)+"\u00d7";
     rHeap.innerHTML = fmt(heap)+' <small>cells</small>';
   }catch(e){
-    resultTile.classList.add("err"); rOut.textContent = "host error";
+    resultTile.classList.add("err"); rOut.textContent = "host error: " + (e && e.message ? e.message : e);
     rMs.textContent="\u2014"; rGc.textContent="\u2014"; rGcSub.textContent="\u00a0"; rHeap.textContent="\u2014";
   }
   runBtn.disabled=false; runBtn.textContent="\u25B6 RUN";

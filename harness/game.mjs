@@ -66,10 +66,16 @@ async function main() {
   const evl = makeEval(ex);
   const dec = new TextDecoder();
   ex.reset_session();
-  evl(fs.readFileSync(GAME, 'utf8')); // defines (tick), renders itself, owns `base`
+  if (evl(fs.readFileSync(GAME, 'utf8')) === '<error>') { // defines (tick), renders itself, owns `base`
+    console.error(`error: ${GAME} failed to load (<error>) — syntax error or arena exhaustion in the game file.`);
+    process.exit(1);
+  }
 
   // Unbounded path: compile (tick) once, then drive it with rerun() + input slots.
-  evl('(tick)');
+  if (evl('(tick)') === '<error>') {
+    console.error(`error: first (tick) returned <error> — ${GAME} defines no working (tick).`);
+    process.exit(1);
+  }
   const entry = ex.last_entry();
   const turn = (dx, dy) => {
     const slots = new Int32Array(ex.memory.buffer, ex.input_slots_ptr(), 8); // refetch: memory may move

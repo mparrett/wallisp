@@ -24,6 +24,6 @@ clang --target=wasm32 -nostdlib -fno-builtin -Oz \
 echo "$WASM: $(wc -c < "$WASM") bytes"
 
 if [ "${1:-}" = "--check" ]; then
-  command -v node >/dev/null || { echo "error: node not found (skipping check)" >&2; exit 0; }
+  command -v node >/dev/null || { echo "error: node not found — --check requested but can't run" >&2; exit 1; }
   node test.mjs
 fi
