@@ -20,6 +20,15 @@
 static const char* rp;
 static const char* rend;
 
+// Recursion-depth guard for the reader. read_expr/read_list/read_string recurse
+// per nesting level; without a cap, deeply nested input (e.g. tens of thousands
+// of '(') overflows the C stack and traps the module instead of returning an
+// error. 200 is far beyond any hand-written nesting and safe for the default
+// wasm stack. The counter is balanced (inc on entry, dec on every exit), so it
+// returns to 0 between top-level forms without an explicit reset.
+#define READ_MAX_DEPTH 200
+static int r_depth = 0;
+
 static void skipws(){
   while(rp<rend){
     char c=*rp;
@@ -32,6 +41,7 @@ static int is_delim(char c){
   return c==' '||c=='\t'||c=='\n'||c=='\r'||c=='('||c==')'||c==','||c==';'||c==0;
 }
 static u32 read_expr();
+static u32 read_expr_body();
 
 static u32 read_list(){
   u32 first=NIL; u32 last=NIL;
@@ -53,9 +63,23 @@ static u32 read_atom(){
   int neg=0; const char* p=start; u32 n=len;
   if(n>0 && (*p=='-'||*p=='+')){ neg=(*p=='-'); p++; n--; }
   if(n>0){
-    int isnum=1; i32 val=0;
-    for(u32 i=0;i<n;i++){ char c=p[i]; if(c<'0'||c>'9'){isnum=0;break;} val=val*10+(c-'0'); }
-    if(isnum) return mkfix(neg?-val:val);
+    // Fixnums are 30-bit signed (2-bit tag in mkfix). Accumulate in i64 and
+    // saturate past the range so a long digit string can't overflow the
+    // accumulator (UB) or silently wrap into a wrong fixnum. An out-of-range
+    // numeric literal is an error, matching the arithmetic prims' fits_fix.
+    #define READER_FIX_MAX  536870911LL     //  0x1FFFFFFF
+    #define READER_FIX_MIN  (-536870912LL)  // -0x20000000
+    int isnum=1; long long val=0;
+    for(u32 i=0;i<n;i++){
+      char c=p[i]; if(c<'0'||c>'9'){isnum=0;break;}
+      val=val*10+(c-'0');
+      if(val > 1073741824LL) val = 1073741824LL;   // clamp: still > FIX_MAX, so rejected below
+    }
+    if(isnum){
+      long long sv = neg ? -val : val;
+      if(sv < READER_FIX_MIN || sv > READER_FIX_MAX) return ERR;
+      return mkfix((i32)sv);
+    }
   }
   return intern(start,len);
 }
@@ -65,6 +89,12 @@ static u32 read_string();  // engine-provided; see e.g. bytecode_gc.c
 #endif
 
 static u32 read_expr(){
+  if(++r_depth > READ_MAX_DEPTH){ --r_depth; return ERR; }
+  u32 r = read_expr_body();
+  --r_depth;
+  return r;
+}
+static u32 read_expr_body(){
   skipws();
   if(rp>=rend) return ERR;
   char c=*rp;

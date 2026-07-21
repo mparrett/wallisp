@@ -151,7 +151,18 @@ static u32 strheap_top = 0;
 static u32 g_pending_str_off = STR_NONE;
 
 static u32 str_entry_size(u32 len){ return 4u + ((len + 3u) & ~3u); }
-static int is_string(u32 v){ return is_cons(v) && cells[considx(v)].car == s_string; }
+static int is_string(u32 v){
+  if(!(is_cons(v) && cells[considx(v)].car == s_string)) return 0;
+  // A string wrapper is forgeable from pure Lisp — `(cons '%string <fixnum>)`
+  // makes a cons whose car is s_string and whose cdr is an arbitrary offset.
+  // Never dereference the offset without bounds-checking it against strheap,
+  // or str_off/str_len/str_data read out of bounds. Arithmetic is ordered to
+  // avoid unsigned overflow (off may be huge or negative-cast-to-u32).
+  u32 off = (u32)fixval(cells[considx(v)].cdr);
+  if(off > strheap_top || strheap_top - off < 4u) return 0;   // header in range
+  u32 len = *(u32*)(strheap + off) & 0x7FFFFFFFu;
+  return str_entry_size(len) <= strheap_top - off;            // whole entry in range
+}
 static u32 str_off(u32 v){ return (u32)fixval(cells[considx(v)].cdr); }
 static u32 str_len(u32 v){ return *(u32*)(strheap + str_off(v)) & 0x7FFFFFFFu; }
 static const u8* str_data(u32 v){ return strheap + str_off(v) + 4u; }
@@ -529,7 +540,9 @@ static void mark(u32 v){
   // not specialise across it — that's part of what H6 is measuring.
   if(cells[i].car == s_string){
     u32 off = (u32)fixval(cells[i].cdr);
-    if(off < STR_HEAP_BYTES) *(u32*)(strheap + off) |= 0x80000000u;
+    // off + 4 must fit; a forged offset of STR_HEAP_BYTES-1 would otherwise
+    // OR a u32 three bytes past the end of strheap[].
+    if(off <= STR_HEAP_BYTES - 4u) *(u32*)(strheap + off) |= 0x80000000u;
   }
 }
 static void gc(void){
@@ -585,6 +598,8 @@ static u32 run(u32 entry){
   u32 ip=entry; R_env=NIL; R_vsp=0; R_csp=0;
   for(;;){
     if(g_oom) return ERR;
+    if(R_vsp >= VSTACK_MAX-2) return ERR;   // operand-stack guard: a flat call with
+                                            // >65k args would otherwise overrun vstack[]
     u32 opc=code[ip++];
     switch(opc){
       case OP_CONST: vstack[R_vsp++]=code[ip++]; break;
@@ -770,7 +785,19 @@ static void oemit(char c){ if(outlen<OUTCAP)outbuf[outlen++]=c; }
 static void emits(const char*s){ while(*s)oemit(*s++); }
 static void emitint(i32 n){ if(n<0){oemit('-');n=-n;} char tmp[12];int k=0;
   if(n==0){oemit('0');return;} while(n){tmp[k++]='0'+(n%10);n/=10;} while(k)oemit(tmp[--k]); }
+static int pr_depth=0;
+#define PRDEPTH_MAX 200
+static void print_val_body(u32 v);
+// Bounded printer: cyclic structure (via set-car!/set-cdr!) would otherwise
+// loop forever or overflow the C stack. The buffer-full check bounds a cyclic
+// cdr-spine; the depth counter bounds a cyclic/deep car chain.
 static void print_val(u32 v){
+  if(outlen>=OUTCAP) return;
+  if(++pr_depth > PRDEPTH_MAX){ --pr_depth; emits("..."); return; }
+  print_val_body(v);
+  --pr_depth;
+}
+static void print_val_body(u32 v){
   if(is_fix(v)){emitint(fixval(v));return;}
   if(v==NIL){emits("()");return;} if(v==TRUE){emits("t");return;}
   if(v==ERR||v==UNBOUND){emits("<error>");return;}
@@ -793,7 +820,7 @@ static void print_val(u32 v){
     return;
   }
   if(is_cons(v)){ oemit('('); u32 p=v;int first=1;
-    while(is_cons(p)){if(!first)oemit(' ');first=0;print_val(car(p));p=cdr(p);}
+    while(is_cons(p) && outlen<OUTCAP){if(!first)oemit(' ');first=0;print_val(car(p));p=cdr(p);}
     if(!is_nil(p)){emits(" . ");print_val(p);} oemit(')'); }
 }
 

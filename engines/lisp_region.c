@@ -419,7 +419,19 @@ static void emitint(i32 n){
   while(n){ tmp[k++]='0'+(n%10); n/=10; }
   while(k) emit_(tmp[--k]);
 }
+static int pr_depth=0;
+#define PRDEPTH_MAX 200
+static void print_val_body(u32 v);
+// Bounded printer: cyclic structure (via set-car!/set-cdr!) would otherwise
+// loop forever or overflow the C stack. The buffer-full check bounds a cyclic
+// cdr-spine; the depth counter bounds a cyclic/deep car chain.
 static void print_val(u32 v){
+  if(outlen>=OUTCAP) return;
+  if(++pr_depth > PRDEPTH_MAX){ --pr_depth; emits("..."); return; }
+  print_val_body(v);
+  --pr_depth;
+}
+static void print_val_body(u32 v){
   if(is_fix(v)){ emitint(fixval(v)); return; }
   if(v==NIL){ emits("()"); return; }
   if(v==TRUE){ emits("t"); return; }
@@ -430,7 +442,7 @@ static void print_val(u32 v){
   if(is_cons(v)){
     emit_('(');
     u32 p=v; int first=1;
-    while(is_cons(p)){ if(!first)emit_(' '); first=0; print_val(car(p)); p=cdr(p); }
+    while(is_cons(p) && outlen<OUTCAP){ if(!first)emit_(' '); first=0; print_val(car(p)); p=cdr(p); }
     if(!is_nil(p)){ emits(" . "); print_val(p); }
     emit_(')');
   }

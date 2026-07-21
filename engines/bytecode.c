@@ -309,6 +309,8 @@ static u32 run(u32 entry){
   u32 ip=entry, env=NIL, vsp=0, csp=0;
   for(;;){
     if(g_oom) return ERR;
+    if(vsp >= VSTACK_MAX-2) return ERR;   // operand-stack guard: a flat call with
+                                          // >65k args would otherwise overrun vstack[]
     u32 opc=code[ip++];
     switch(opc){
       case OP_CONST: vstack[vsp++]=code[ip++]; break;
@@ -414,7 +416,19 @@ static void oemit(char c){ if(outlen<OUTCAP)outbuf[outlen++]=c; }
 static void emits(const char*s){ while(*s)oemit(*s++); }
 static void emitint(i32 n){ if(n<0){oemit('-');n=-n;} char tmp[12];int k=0;
   if(n==0){oemit('0');return;} while(n){tmp[k++]='0'+(n%10);n/=10;} while(k)oemit(tmp[--k]); }
+static int pr_depth=0;
+#define PRDEPTH_MAX 200
+static void print_val_body(u32 v);
+// Bounded printer: cyclic structure (via set-car!/set-cdr!) would otherwise
+// loop forever or overflow the C stack. The buffer-full check bounds a cyclic
+// cdr-spine; the depth counter bounds a cyclic/deep car chain.
 static void print_val(u32 v){
+  if(outlen>=OUTCAP) return;
+  if(++pr_depth > PRDEPTH_MAX){ --pr_depth; emits("..."); return; }
+  print_val_body(v);
+  --pr_depth;
+}
+static void print_val_body(u32 v){
   if(is_fix(v)){emitint(fixval(v));return;}
   if(v==NIL){emits("()");return;} if(v==TRUE){emits("t");return;}
   if(v==ERR||v==UNBOUND){emits("<error>");return;}
@@ -422,7 +436,7 @@ static void print_val(u32 v){
   if(is_sym(v)){u32 i=symidx(v);for(u32 k=0;k<symlen[i];k++)oemit(symname[i][k]);return;}
   if(is_closure(v)){emits("<lambda>");return;}
   if(is_cons(v)){ oemit('('); u32 p=v;int first=1;
-    while(is_cons(p)){if(!first)oemit(' ');first=0;print_val(car(p));p=cdr(p);}
+    while(is_cons(p) && outlen<OUTCAP){if(!first)oemit(' ');first=0;print_val(car(p));p=cdr(p);}
     if(!is_nil(p)){emits(" . ");print_val(p);} oemit(')'); }
 }
 
