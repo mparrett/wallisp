@@ -1,6 +1,11 @@
 # H11 — branchless predicate primitives in `bytecode_gc.c`
 
-**Pre-registered 2026-06-06. Measurement pending.**
+**Pre-registered 2026-06-06. Measured — FALSIFIED (wrong direction).**
+
+> The branchless arithmetic was a small but real *pessimization* (~3-5% on the
+> two predicate/comparison-heavy benchmarks; noise floor on the other four) —
+> the opposite of the direction we set as falsification. The change was reverted.
+> See `FINDINGS.md` "H11" for the full outcome.
 
 Motivated by a brief look at branchless quicksort (the "branchless partition"
 trick — replace data-dependent branches with arithmetic on the destination
