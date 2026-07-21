@@ -77,3 +77,7 @@ slice in
   pre-registered hypotheses, and surprises that refuted armchair guesses.
 - **[CLAUDE.md](CLAUDE.md)** — instructions for Claude Code agents working in
   this repo.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
