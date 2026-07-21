@@ -2,7 +2,7 @@
 
 **Created:** 2026-06-04T08:00:00Z
 **Session ID:** 279e456f-dd9c-468c-832d-ab4a18da1868
-**Working Directory:** /Users/matt/projects-new/wallisp
+**Working Directory:** wallisp
 
 ## What to read first
 Two threads from this session both ended up duplicating existing project

@@ -17,23 +17,23 @@ archival.
 
 **Findings**
 
-1. Documentation is stale in a few high-visibility places. [README.md](/Users/matt/projects-new/wallisp/README.md:29) still says primitive arity/type validation is absent, but the current suites include PR1 validation and pass. [DEV.md](/Users/matt/projects-new/wallisp/DEV.md:20) says no strings/division/modulo, while `bytecode_gc` now has strings plus `/` and `mod`. This matters if the repo is used as the basis for a standalone release: the public contract is currently less accurate than the implementation.
+1. Documentation is stale in a few high-visibility places. [README.md](README.md:29) still says primitive arity/type validation is absent, but the current suites include PR1 validation and pass. [DEV.md](DEV.md:20) says no strings/division/modulo, while `bytecode_gc` now has strings plus `/` and `mod`. This matters if the repo is used as the basis for a standalone release: the public contract is currently less accurate than the implementation.
 
-2. The web standalone build path looks abandoned. [web/build-standalone.sh](/Users/matt/projects-new/wallisp/web/build-standalone.sh:13) expects `web/lisp.c` and `web/template.html`, but `web/` only contains `build-standalone.sh` and `tiny-lisp-vm.html`. The checked-in HTML may be fine as an artifact, but the reproducible standalone builder is not aligned with the current repo.
+2. The web standalone build path looks abandoned. [web/build-standalone.sh](web/build-standalone.sh:13) expects `web/lisp.c` and `web/template.html`, but `web/` only contains `build-standalone.sh` and `tiny-lisp-vm.html`. The checked-in HTML may be fine as an artifact, but the reproducible standalone builder is not aligned with the current repo.
 
-3. The strongest extraction seam is real: the bytecode compiler/VM boundary is a flat `u32` bytecode array, and the wasm ABI is only `input_ptr`, `eval_source`, `output_ptr`, plus `gc_count` for the GC build. That is documented in [DEV.md](/Users/matt/projects-new/wallisp/DEV.md:46) and implemented in [engines/bytecode_gc.c](/Users/matt/projects-new/wallisp/engines/bytecode_gc.c:789). This is the subset to productize.
+3. The strongest extraction seam is real: the bytecode compiler/VM boundary is a flat `u32` bytecode array, and the wasm ABI is only `input_ptr`, `eval_source`, `output_ptr`, plus `gc_count` for the GC build. That is documented in [DEV.md](DEV.md:46) and implemented in [engines/bytecode_gc.c](engines/bytecode_gc.c:789). This is the subset to productize.
 
-4. `bytecode_gc.c` is both the finalist and an experiment host. The EXP1 string heap is validated, but intentionally leaks string heap entries until `eval_source()` resets state; the source calls this out at [engines/bytecode_gc.c](/Users/matt/projects-new/wallisp/engines/bytecode_gc.c:565). For a standalone version, either omit strings from the core release or finish string reclamation and make strings part of the contract.
+4. `bytecode_gc.c` is both the finalist and an experiment host. The EXP1 string heap is validated, but intentionally leaks string heap entries until `eval_source()` resets state; the source calls this out at [engines/bytecode_gc.c](engines/bytecode_gc.c:565). For a standalone version, either omit strings from the core release or finish string reclamation and make strings part of the contract.
 
 **Most Impactful Findings**
 
-The major project result is not “a tiny Lisp in wasm”; it is the measured ranking of implementation strategies. Bytecode is the load-bearing lever: [ENGINES.md](/Users/matt/projects-new/wallisp/ENGINES.md:121) records it as 2.3-3.9x faster than the tree-walker, because it removes repeated AST walking, special-form dispatch, and consed arg lists from the hot path.
+The major project result is not “a tiny Lisp in wasm”; it is the measured ranking of implementation strategies. Bytecode is the load-bearing lever: [ENGINES.md](ENGINES.md:121) records it as 2.3-3.9x faster than the tree-walker, because it removes repeated AST walking, special-form dispatch, and consed arg lists from the hot path.
 
-The CEK result is the sharpest negative finding. It earns capability, not speed: deep non-tail recursion and `call/cc`, but it is slower and allocates heavily. [ENGINES.md](/Users/matt/projects-new/wallisp/ENGINES.md:103) captures the important version: even `call/cc` did not rescue CEK as a performance story.
+The CEK result is the sharpest negative finding. It earns capability, not speed: deep non-tail recursion and `call/cc`, but it is slower and allocates heavily. [ENGINES.md](ENGINES.md:103) captures the important version: even `call/cc` did not rescue CEK as a performance story.
 
-The GC finding is the most reusable systems lesson. Collection work itself was not the main cost; the cost was the optimizer barrier once `cons()` can reach `gc()`. The three GC engines plus region-drop make that robust, not anecdotal. The region-drop result at [ENGINES.md](/Users/matt/projects-new/wallisp/ENGINES.md:96) is especially valuable because it isolates the zero-tax floor.
+The GC finding is the most reusable systems lesson. Collection work itself was not the main cost; the cost was the optimizer barrier once `cons()` can reach `gc()`. The three GC engines plus region-drop make that robust, not anecdotal. The region-drop result at [ENGINES.md](ENGINES.md:96) is especially valuable because it isolates the zero-tax floor.
 
-The final practical winner is `bytecode_gc`: [ENGINES.md](/Users/matt/projects-new/wallisp/ENGINES.md:127) calls it the shippable engine, and I agree. It has TCO, real reclamation for cons cells, validated primitives, inline primitive fast paths that preserve redefinition semantics, and the cleanest host boundary.
+The final practical winner is `bytecode_gc`: [ENGINES.md](ENGINES.md:127) calls it the shippable engine, and I agree. It has TCO, real reclamation for cons cells, validated primitives, inline primitive fast paths that preserve redefinition semantics, and the cleanest host boundary.
 
 **Standalone Strategy**
 

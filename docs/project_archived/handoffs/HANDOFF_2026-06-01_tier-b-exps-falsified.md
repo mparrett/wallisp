@@ -2,7 +2,7 @@
 
 **Created:** 2026-06-01T17:30:00Z
 **Session ID:** c7b6b04f-e223-4ed8-8b08-48c142ebaee9
-**Working Directory:** /Users/matt/projects-new/wallisp
+**Working Directory:** wallisp
 
 ## What to read first
 Tier B from `docs/project_notes/gap_closure_plan.md` is shipped: EXP2 (`call/cc`

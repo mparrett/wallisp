@@ -2,7 +2,7 @@
 
 **Created:** 2026-06-01T06:40:49Z
 **Session ID:** 7f48fa69-a9dc-4557-ab68-7f8700ba8250
-**Working Directory:** /Users/matt/projects-new/wallisp
+**Working Directory:** wallisp
 
 ## What to read first
 Tier A from `docs/project_notes/gap_closure_plan.md` is fully shipped — PR1 (prim validation) and PR2 (mutation) both landed across all 8 engines, all 8 commits pushed to `origin/main`, working tree clean. Two parity-breaking experiments (EXP1 strings, EXP2 call/cc) are next in the plan, both pre-registered with hypotheses ready to test.

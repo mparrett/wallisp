@@ -2,7 +2,7 @@
 
 **Created:** 2026-06-05
 **Session ID:** 5fddad8c-25b4-4da7-99e3-d70a52662cd0
-**Working Directory:** /Users/matt/projects-new/wallisp
+**Working Directory:** wallisp
 
 ## What to read first
 
