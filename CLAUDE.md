@@ -42,12 +42,16 @@ If building by hand instead of via `build.sh`:
 
 ## Project notes
 
-Project notes and design records live in `docs/notes/` — read and update these:
+Durable, reader-facing project docs live in `docs/notes/` — read and update these:
 
 **Before proposing changes**: Check `decisions.md` for existing ADRs
-**When encountering errors**: Search `bugs.md` for known solutions
 **When looking up config**: Check `key_facts.md` for ports, URLs, environments
 
-When resolving bugs or making decisions, update the relevant file. Older
-session material (handoffs, review transcripts) is archived outside this repo
-and available on request.
+When making a decision, update the relevant file.
+
+**Keep internal working notes out of this repo.** Audits, bug/incident logs,
+session handoffs, and review transcripts are process artifacts, not public
+reference — they belong in the out-of-repo notes archive, never committed here.
+`docs/notes/` is only for durable docs a public visitor should see. (Earlier
+such material has already been archived outside this repo and is available on
+request.)
