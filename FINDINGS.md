@@ -46,7 +46,7 @@ real constant-factor win, not noise. CEK is ~2.2x *slower* than the tree-walker
 2. **CEK's one exclusive win is deep NON-tail recursion.** `sum(10000)` with
    `(+ n (sum ...))` cannot be looped by any optimizer. The tree-walker
    overflows the C stack (~10k frames); CEK computes it, because depth lives in
-   heap continuations. That is the *only* axis CEK clearly wins — and it cost
+   heap continuations. That is the *only* axis CEK wins — and it cost
    2.2x speed plus ~130 lines of machine to get.
 
 ## Recursion-depth behavior (all need enough memory; the *mechanism* differs)
@@ -90,7 +90,7 @@ matched 20M-cell arenas, best-of-25, all three engines cross-checked to agree:
 | nrev+sum(150)    | ALLOCATION-bound, O(n^2) conses    | 3.57    | 6.72     | 0.91          | 3.94x    |
 
 **The 2.6x was not a fib artifact** — bytecode wins 2.3x–3.9x across every shape.
-Two notable points:
+Two points:
 
 - **Biggest win is the allocation-bound benchmark (3.94x).** Counterintuitive:
   one might expect bytecode's operand-stack edge to shrink when the program
@@ -217,7 +217,7 @@ V8 helps the simpler engine more.
 
 **3. GC overhead native (~1.32x on fib) is smaller than GC overhead wasm
 (~1.38x), but both are real.** This refines H2: the "optimization barrier" is
-genuinely a compiler-level phenomenon (clang itself can't treat `cons` as
+a compiler-level phenomenon (clang itself can't treat `cons` as
 side-effect-free when it can reach `gc()`), but V8's JIT then amplifies it.
 The H2 wasm number (1.66x in the original measurement) isn't a pure measurement
 of the barrier — it's the barrier *amplified* by the JIT. Native lets us see
@@ -255,7 +255,7 @@ recursive in C (clang TCEs it).
 | nrev+sum(150)  | 0.87        | 0.09    | 0.15    |  9.7×      |  6.0×     |
 | tailsum(30000) | 1.57        | 0.02    | 0.00    | 96.9×      |  ∞ (folded)|
 
-Two findings worth surfacing:
+Two findings:
 
 **1. JS beats C on `nrev+sum`.** The only row where the gap from the
 interpreter to JS is wider than the gap to C. Mechanism: one iteration does
@@ -269,7 +269,7 @@ which is precisely what the engines do internally.
 **2. `tailsum(30000)` in C clocks at 0.000 ms.** clang at `-O2` sees through
 the tail recursion and rewrites the loop as `n*(n+1)/2`. The reported time
 is below the timer's resolution because the work isn't being done at runtime;
-it was done at compile time. The Lisp engines obviously can't do this — the
+it was done at compile time. The Lisp engines can't do this — the
 program isn't visible to clang. This is the structural reason an interpreter,
 however well-written, has a ceiling it can't reach: it can't see the whole
 program.
@@ -282,8 +282,7 @@ program.
 
 The engine work in this project moves us ~8× (cek_gc → bytecode_gc), on the
 interpreter side of a fixed substrate. The remaining ~55× to native C lives
-in compiler/JIT territory we don't control. Worth knowing where the headroom
-actually sits.
+in compiler/JIT territory we don't control. That's where the headroom sits.
 
 ## Build flag: `-O2` vs `-Oz` — half the wasm size, free or better on V8 (except CEK)
 
@@ -642,7 +641,7 @@ the load-bearing rebind test
   `(begin (define + (lambda (a b) 99)) (+ 1 2)) => 99`.
 The compile-time bc_super pattern would answer `3` here.
 
-### Three findings worth flagging
+### Three findings
 
 **1. 4.8's GC prediction confirmed: fib(24) goes 4→1 GC cycles.**
    Fewer cons calls (no per-call arg list) → fewer collections. The
@@ -703,7 +702,7 @@ new binding. Module size +389 bytes (15748 → 16137).
 | **nrev+sum(150)** | —      | **−13%** | **unpredicted: hot loop is car/cdr/null?** |
 | **meta-fib(12)** | −5% to −15% | **−18.5%** | **beats upper bound** |
 
-Two findings worth flagging.
+Two findings.
 
 **1. The meta-fib win beats the upper prediction.** −18.5% mean is
 materially above the −5% to −15% pre-registered range. The mechanism
@@ -806,7 +805,7 @@ is refuted; what's actually driving the effect is H2 from a new angle.
     shape, and CEK's tight musttail chain is closer to V8's sweet spot than
     bytecode's dispatch loop is.
 
-### What the data actually says (mechanism)
+### What the data says (mechanism)
 
 The H4 effect is real but it works through H2 (optimization barrier per
 cons-callsite), not through the collection-frequency story I pre-registered.
@@ -1513,7 +1512,7 @@ prediction. Run-to-run variance is high on `cek_gc` (52-84 ms across
 numbers were captured at a different time, so part of the gap is
 ambient V8/system drift, not all PR1c cost.)
 
-### The headline finding: `bytecode_gc` now beats `bytecode` on prim-heavy code
+### `bytecode_gc` now beats `bytecode` on prim-heavy code
 
 Pre-PR1, the `bytecode_gc` / `bytecode` fib(24) ratio was **1.017×**
 (GC tax, the famous H2 finding). Post-PR1c, the same ratio is
@@ -1647,7 +1646,7 @@ Parity: 98/98 cross-engine programs agree, 19/19 PR2 assertions pass.
 - (b) **Confirmed.** ~2% measurable cost on a benchmark that doesn't
   exercise set! — basically noise.
 
-### The killer test (works)
+### Mutation through a captured closure (works)
 
 ```scheme
 (begin
@@ -1943,7 +1942,7 @@ framing was naive at the implementation level.
 
 ### What was implemented
 
-Cheap and clean: ~25 lines in each of `cek.c` and `cek_gc.c`. A reified
+Cheap: ~25 lines in each of `cek.c` and `cek_gc.c`. A reified
 continuation is a single cons `(%cont . K)` where `K` is the saved
 continuation chain. In the `K_ARGS` apply branch:
 
@@ -1989,7 +1988,7 @@ Ratios:
 - `cek_explicit / bytecode_gc_explicit = 7.70×` — CEK's baseline gap on
   this shape (much wider than the 2.2× the cek.c banner cites for fib).
 
-### What this actually measured
+### What this measured
 
 The 23× is the *product* of two independent costs:
 

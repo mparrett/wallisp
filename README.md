@@ -2,7 +2,7 @@
 
 *wallisp* — a **W**eb**A**ssembly **L**ittle **L**isp, implemented eight ways and measured.
 
-A small Lisp implemented eight ways across three architectures (tree-walker,
+A small Lisp built as eight engines across three architectures (tree-walker,
 CEK machine, bytecode VM) and three GC strategies (none, mark-sweep,
 region-drop), compiled to freestanding `wasm32` with **zero imports**, then
 driven by measurement to a finalist: a bytecode VM with TCO and a

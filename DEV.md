@@ -56,7 +56,7 @@ Opcodes (14): `CONST LOADL LOADG DEFG SETL SETG POP JMP JFALSE CLOSURE CALL
 TAILCALL RET HALT` (+ `PADD PSUB PMUL PEQ PLT` in the superinstruction build).
 `SETL`/`SETG` implement `set!` on locals/globals; `TAILCALL` is the tail-position
 call that keeps a tail loop in constant call-stack space. The compiler→VM split
-is a real producer/consumer seam: a **flat u32 array is the entire interface**
+is a producer/consumer seam: a **flat u32 array is the entire interface**
 (plus the arena for any quoted constants). This is *why* the bytecode VM — alone
 among the three — decouples cleanly. The tree-walker and CEK consume the AST
 cons-graph + symbol table, i.e. "share the whole heap," so they have no thin seam.
@@ -78,7 +78,7 @@ cons-tagged `OP_CONST` constants embedded in the bytecode. Pre-registered, teste
   collection itself is nearly free; the cost is an **optimization barrier** — once
   `cons` can reach `gc()`, the compiler can't treat allocation as side-effect-free.
 
-## The optimization ladder — `prototype/` (most recent thread)
+## The optimization ladder — `prototype/`
 
 From `bc_orig.c` (simplest: **no TCO, no GC**), we explored *where* to implement
 "make primitive calls cheap," at three levels:
@@ -93,7 +93,7 @@ From `bc_orig.c` (simplest: **no TCO, no GC**), we explored *where* to implement
 live value (correct even if `+` is redefined) but pays a per-call check.
 Compile-time superinstructions are fastest and finally cut the instruction count,
 but bake in "primitives aren't rebound" (`(define +)` then `(+ 1 2)` gives 99 on
-base/inline, 3 on super). Real Schemes gate exactly this behind
+base/inline, 3 on super). Real Schemes gate this behind
 `usual-integrations`-style declarations. The instruction counter that made this
 measurable was added by **hand-editing the WAT** (see `wat/`).
 
@@ -194,7 +194,7 @@ it per frame, so `code[]` stops growing — verified at 1e6 ticks. Driver:
 
 ### Bytecode disassembly + wasm inspection
 
-Two views into "what is the VM actually executing," answering different
+Two views into "what the VM is executing," answering different
 questions:
 
 - **VM bytecode (the inner IR).** `bash harness/disasm.sh` builds a
@@ -208,7 +208,7 @@ questions:
   `br_table` over 14 opcodes; each arm specializes independently in V8.
 
 See `docs/notes/bytecode_disasm.md` and `wasm_dispatch.md` for
-the writeup of what we found inspecting the metacircular eval. Notable:
+the writeup of what we found inspecting the metacircular eval:
 the bytecode-count share of `LOADG` looks alarmingly dominant (32%),
 but the wasm view shows V8 already specializes those arms tight — the
 env-lookup falsification (FINDINGS.md "Two surprises") generalizes.
@@ -228,7 +228,7 @@ gaps; GC overhead has a native floor (~1.3x) that V8 amplifies.
 
 Verified: **Node** (V8) and **Bun** (JavaScriptCore) — both run the harnesses
 unchanged, and their `bench.mjs` ratios agree within ~5% across two independent
-JIT engines (real cross-validation of "trust ratios, not magnitudes").
+JIT engines (cross-validation of "trust ratios, not magnitudes").
 
 **Deno** needs porting and is currently a poor fit for `bench.mjs` regardless:
 the bare-global ergonomics differ (Node-style `'fs'`/`'path'`/`'url'` need

@@ -153,7 +153,7 @@ wins 2.6×); GC strategy is a smaller secondary effect (0.94×-1.83× swing).
 
 If your priority is small + simple, `lisp.c` is 450 lines and runs everything
 the suite throws at it within the C stack and a 16M-cell arena;
-`lisp_region.c` adds 31 lines and gives you actual memory reclamation.
+`lisp_region.c` adds 31 lines and gives you memory reclamation.
 
 ## Where the ceiling is — hand-written JS and C baselines
 
