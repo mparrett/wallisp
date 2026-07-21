@@ -19,7 +19,7 @@ node harness/lisp-cli.mjs -e '(+ 1 2)'
 ```
 
 Run with a different engine by pointing the CLI at a different wasm:
-the file is a hardcoded path in `harness/lisp-cli.mjs:14` — edit it to
+the file is a hardcoded path in `harness/lisp-cli.mjs:17` — edit it to
 `lisp.wasm` (tree-walker), `cek.wasm` (CEK machine), etc. All eight
 engines accept the same source and produce the same output.
 

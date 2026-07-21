@@ -31,14 +31,14 @@ taught us" below).
 
 | engine            | arch         | GC         | lines | arena (default) | fib(24) native ms | fib(24) wasm ms | vs `bytecode_gc` wasm |
 |-------------------|--------------|------------|-------|-----------------|-------------------|-----------------|------------------------|
-| `lisp.c`          | tree-walker  | none       |   457 |    131K cells   |  12.86            | 16.83           | 1.90×                  |
-| `lisp_trampoline.c`| tree-walker | none       |   463 |    131K cells   |  13.63            | 16.96           | 1.91×                  |
-| `lisp_region.c`   | tree-walker  | region-drop|   479 |    262K cells   |  13.44            | 15.95           | 1.80×                  |
-| `lisp_gc.c`       | tree-walker  | mark-sweep |   590 |    262K cells   |  16.61            | 22.59           | 2.55×                  |
-| `cek.c`           | CEK          | none       |   530 |    131K cells   |  27.81            | 34.58           | 3.90×                  |
-| `cek_gc.c`        | CEK          | mark-sweep |   617 |    262K cells   |  33.49            | 62.93           | 7.10×                  |
-| `bytecode.c`      | bytecode     | none       |   451 |    262K cells   |   5.92            |  9.33           | 1.05×                  |
-| `bytecode_gc.c`   | bytecode     | mark-sweep |   629 |    262K cells   |   5.91            |  8.87           | 1.00× (anchor)         |
+| `lisp.c`          | tree-walker  | none       |   450 |    131K cells   |  12.86            | 16.83           | 1.90×                  |
+| `lisp_trampoline.c`| tree-walker | none       |   460 |    131K cells   |  13.63            | 16.96           | 1.91×                  |
+| `lisp_region.c`   | tree-walker  | region-drop|   481 |    262K cells   |  13.44            | 15.95           | 1.80×                  |
+| `lisp_gc.c`       | tree-walker  | mark-sweep |   596 |    262K cells   |  16.61            | 22.59           | 2.55×                  |
+| `cek.c`           | CEK          | none       |   557 |    131K cells   |  27.81            | 34.58           | 3.90×                  |
+| `cek_gc.c`        | CEK          | mark-sweep |   659 |    262K cells   |  33.49            | 62.93           | 7.10×                  |
+| `bytecode.c`      | bytecode     | none       |   469 |    262K cells   |   5.92            |  9.33           | 1.05×                  |
+| `bytecode_gc.c`   | bytecode     | mark-sweep |   956 |    262K cells   |   5.91            |  8.87           | 1.00× (anchor)         |
 
 fib(24), best-of-25, both substrates (min-of-min over 3 passes for wasm,
 min over 10 runs for native — bench is noisy at sub-20ms). The full
@@ -151,9 +151,9 @@ FINDINGS.md for the full story.
 If your priority is speed, the engine architecture is the lever (bytecode
 wins 2.6×); GC strategy is a smaller secondary effect (0.94×-1.83× swing).
 
-If your priority is small + simple, `lisp.c` is 457 lines and runs everything
+If your priority is small + simple, `lisp.c` is 450 lines and runs everything
 the suite throws at it within the C stack and a 16M-cell arena;
-`lisp_region.c` adds 22 lines and gives you actual memory reclamation.
+`lisp_region.c` adds 31 lines and gives you actual memory reclamation.
 
 ## Where the ceiling is — hand-written JS and C baselines
 

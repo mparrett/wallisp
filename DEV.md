@@ -1,9 +1,10 @@
 # Tiny Lisp → WebAssembly — developer guide
 
-One small Lisp, implemented three ways (tree-walker, CEK machine, bytecode VM),
-compiled to **freestanding wasm32** (no libc, **zero imports**), then driven by
-measurement to a finalist: a bytecode VM with tail-call optimization and a
-hand-rolled **mark-sweep garbage collector**.
+One small Lisp, implemented eight ways across three architectures (tree-walker,
+CEK machine, bytecode VM) and three GC strategies, compiled to **freestanding
+wasm32** (no libc, **zero imports**), then driven by measurement to a finalist:
+a bytecode VM with tail-call optimization and a hand-rolled **mark-sweep
+garbage collector**.
 
 For build/run, see [README.md](README.md). For the empirical record, see
 [FINDINGS.md](FINDINGS.md). For agent-specific instructions, see
@@ -14,19 +15,18 @@ For build/run, see [README.md](README.md). For the empirical record, see
 - **32-bit tagged values**, low 2 bits = tag: `00` fixnum (30-bit signed,
   **wraps at ~536M**), `01` cons (index into the cell arena), `10` symbol
   (interned, stable), `11` special (nil / true / error / primitives).
-- **Special forms:** `quote if define lambda let begin cond`. `define` also
+- **Special forms:** `quote if define lambda let begin cond set!`. `define` also
   accepts the function shorthand `(define (f a b) body)`; `cond` recognises
   `else` as the catch-all clause head.
 - **Primitives (shared core):** `cons car cdr + - * / mod = < null? pair?
-  list? number? symbol?`. Fixnum-only — no floats. Division-by-zero and
-  arithmetic overflow are errors. PR1 brought this to all eight engines
-  so the shared semantic floor is real, not "tinylisp/mal minimal-
-  validation". (`number?` / `symbol?` shipped 2026-06-03 to unblock the
-  metacircular eval.)
-- **`bytecode_gc` extensions:** strings (`string?` `string-length` `string-ref`
-  `string=?` `string-append`) and mutation (`set-car!` `set-cdr!`). Other
-  engines leave these unbound; `harness/parity.mjs` gates the relevant
-  programs to engines that support them.
+  list? number? symbol? set-car! set-cdr!`. Fixnum-only — no floats.
+  Division-by-zero and arithmetic overflow are errors. PR1/PR2 brought this
+  floor (validation, `set!`, and pair mutation) to all eight engines, so it's
+  real, not "tinylisp/mal minimal-validation". (`number?` / `symbol?` shipped
+  2026-06-03 to unblock the metacircular eval.)
+- **`bytecode_gc` extension:** strings (`string?` `string-length` `string-ref`
+  `string=?` `string-append`) are the one capability the other engines leave
+  unbound; `harness/parity.mjs` gates the string programs to `bytecode_gc`.
 - **Arity and types** are validated on both primitives and user lambdas.
   `(+ 1)`, `(+ 'a 1)`, and `((lambda (x) x) 1 2)` all return `<error>`.
   Some malformed programs still surface as bare `<error>` rather than a
@@ -52,8 +52,10 @@ Bytecode's biggest win (3.9×) is on allocation-heavy list reversal, smallest
 
 ## The bytecode ISA — the decoupling seam
 
-Opcodes: `CONST LOADL LOADG DEFG POP JMP JFALSE CLOSURE CALL RET HALT`
-(+ `PADD PSUB PMUL PEQ PLT` in the superinstruction build). The compiler→VM split
+Opcodes (14): `CONST LOADL LOADG DEFG SETL SETG POP JMP JFALSE CLOSURE CALL
+TAILCALL RET HALT` (+ `PADD PSUB PMUL PEQ PLT` in the superinstruction build).
+`SETL`/`SETG` implement `set!` on locals/globals; `TAILCALL` is the tail-position
+call that keeps a tail loop in constant call-stack space. The compiler→VM split
 is a real producer/consumer seam: a **flat u32 array is the entire interface**
 (plus the arena for any quoted constants). This is *why* the bytecode VM — alone
 among the three — decouples cleanly. The tree-walker and CEK consume the AST
@@ -142,10 +144,13 @@ work as-is with just `node`. `harness/bench.mjs` is the exception: it loads the
 
 ### Compiler flags
 
-All engines: `--target=wasm32 -nostdlib -Wl,--no-entry -Wl,--export-dynamic
--Wl,--allow-undefined -Wl,--initial-memory=33554432`. Extra per engine:
-- `cek.c` needs **`-mtail-call`** (uses `__attribute__((musttail))`).
-- `bytecode_gc.c` needs **`-fno-builtin`** (defines its own `memset`/`memcpy`).
+All engines: `--target=wasm32 -nostdlib -fno-builtin -Wl,--no-entry
+-Wl,--export-dynamic -Wl,--allow-undefined -Wl,--initial-memory=33554432`.
+`-fno-builtin` is required on **every** engine on LLVM 20+: without it clang
+synthesizes `strlen`/`memset` calls that break the zero-imports property (it
+also keeps `bytecode_gc.c`'s own `memset`/`memcpy` from being lowered into
+calls to themselves). Extra per engine:
+- `cek.c` / `cek_gc.c` need **`-mtail-call`** (uses `__attribute__((musttail))`).
 - Arenas are tunable via `#define MAX_CELLS`. `build.sh` also emits big-arena
   `*_big.wasm` for `harness/bench.mjs`, since the no-GC engines exhaust a small
   arena on heavy benchmarks.
@@ -200,7 +205,7 @@ questions:
   `engines/bytecode_gc.c` — normal builds are byte-identical.
 - **Engine wasm (what V8 sees).** `brew install wabt` then `wasm2wat
   bytecode_gc.wasm`. The big run-loop `switch` compiles to a single
-  `br_table` over 12 opcodes; each arm specializes independently in V8.
+  `br_table` over 14 opcodes; each arm specializes independently in V8.
 
 See `docs/notes/bytecode_disasm.md` and `wasm_dispatch.md` for
 the writeup of what we found inspecting the metacircular eval. Notable:
@@ -241,16 +246,10 @@ real Deno port would need `performance.now()` in the bench path.
 2. **Redefinition guard** so superinstructions are fast *and* correct under
    `(define +)`. Worth folding into the same pass as #1 — lands fast + correct
    in one shot instead of shipping the silent divergence.
-3. **All-engine GC** — DONE. Both `cek_gc.c` and `lisp_gc.c` shipped. Three GC
-   engines now exist; together they establish a clean ordering of V8's
-   amplification of the H2 optimization barrier (bytecode_gc ~1.0×, lisp_gc
-   ~1.1×, cek_gc ~1.4×) that maps to each engine's JIT-specializability. See
-   FINDINGS.md sections "H4 — GC ported into CEK" and "H4 — GC ported into
-   the tree-walker" for the measurement and falsification log.
-4. **Hand-written-VM north star** — a clean hand-written WAT interpreter over our
+3. **Hand-written-VM north star** — a clean hand-written WAT interpreter over our
    existing ISA, reusing the clang front-end as the bytecode *producer* (~400 lines;
    the tractable, instructive slice — skip hand-writing the reader/printer/compiler).
-5. **TCE cross-validation via WAT diff** — the one place wasm is authoritative
+4. **TCE cross-validation via WAT diff** — the one place wasm is authoritative
    (a structural question, not a timing one): confirm clang turned the tree-walker's
    self-tail-call into a loop, then perturb it out of tail position and watch it
    become a real recursive `call`.
@@ -258,27 +257,35 @@ real Deno port would need `performance.now()` in the bench path.
 ## File map
 
 ```
+README.md ENGINES.md DEV.md FINDINGS.md   the four top-level docs (start at README)
 build.sh                 build all engines -> *.wasm (pass --native for native bins)
-FINDINGS.md              full empirical record (engine benchmarks + GC hypotheses)
 *.wasm                   prebuilt engines (run immediately without clang)
 engines/                 the engines (see engines/README.md)
   lisp.c lisp_trampoline.c lisp_gc.c lisp_region.c cek.c cek_gc.c bytecode.c bytecode_gc.c
+  reader.h               shared s-expression reader, #include'd by every engine
 prototype/               bytecode optimization ladder (see prototype/README.md)
   bc_orig.c bc_base.c bc_inline.c bc_super.c
+  futamura/              partial-evaluation / Futamura-projection experiments (H9/H10);
+                         emits residual_*.wasm at the repo root (gitignored)
 wat/                     hand-editable WAT experiments
   probe.wat bc_edit.c bc_edit.wat bc_instr.wat
-harness/                 node drivers (also runs under Bun)
+harness/                 node drivers (also run under Bun)
   lisp-cli.mjs           one-shot eval over any engine (re-inits each call)
-  test_bc.mjs bench.mjs  bytecode tests; cross-engine benchmark (loads *_big.wasm)
   repl.mjs               persistent-session REPL over eval_persistent
-  test_session.mjs       persistent-session contract test (state survives, cp-append)
-  render_probe.mjs       render slice + per-frame strheap-leak measurement
   game.mjs               TUI game-loop driver (terminal; xterm.js flavour is web/game.html)
+  render_probe.mjs       render slice + per-frame strheap-leak measurement
+  parity.mjs parity_strings.mjs parity_callcc.mjs    cross-engine semantic parity suites
+  test_bc.mjs test_session.mjs test_futamura_regressions.mjs   correctness/contract tests
+  bench.mjs bench_callcc.mjs bench_futamura.mjs bench_preproc.mjs   benchmarks (load *_big.wasm)
+  disasm.mjs disasm.sh   bytecode disassembler (builds + reads disasm.wasm)
+examples/                runnable .lisp programs (see examples/README.md), incl. coin2d.lisp
+standalone/              single-file extraction of the finalist VM (wallisp.c + cli/test)
+baselines/               hand-written JS + C baselines (bench.{js,c}) + metacircular.lisp
 native/                  native build (no wasm, no JIT) — see "Native build" above
   bench.c main.c
+tests/                   reader-sugar shell test
 web/                     self-contained browser showcase
-  tiny-lisp-vm.html build-standalone.sh
-  game.html              TUI game in xterm.js — generated by build-game.sh from
-                         game-template.html (inlines bytecode_gc.wasm + coin2d.lisp)
-docs/                    project memory (notes, incoming tickets, archived)
+  tiny-lisp-vm.html build-standalone.sh          live REPL + writeup; standalone builder
+  game.html game-template.html build-game.sh     TUI game in xterm.js (inlines wasm + coin2d)
+docs/                    rendered writeups (index.html, futamura.html) + notes/ (design records)
 ```

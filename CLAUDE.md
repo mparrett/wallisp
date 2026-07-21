@@ -34,9 +34,11 @@ before debugging the engine.
 ## Build gotchas
 
 If building by hand instead of via `build.sh`:
-- `cek.c` needs **`-mtail-call`** (uses `__attribute__((musttail))`).
-- `bytecode_gc.c` needs **`-fno-builtin`** (defines its own `memset` / `memcpy`).
-  The tell when this is missing is an undefined-`memset` link error.
+- **Every** engine needs **`-fno-builtin`** on LLVM 20+: without it clang
+  synthesizes `strlen`/`memset` calls that break the zero-imports property
+  (and, for `bytecode_gc.c`, lower its own `memset`/`memcpy` into calls to
+  themselves). The tell when this is missing is an undefined-`memset` link error.
+- `cek.c` / `cek_gc.c` need **`-mtail-call`** (uses `__attribute__((musttail))`).
 
 ## Project notes
 

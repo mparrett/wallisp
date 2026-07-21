@@ -16,10 +16,10 @@ see [`../ENGINES.md`](../ENGINES.md). For the architectural tour see
 | 7     | `lisp_region.c`   | tree-walker + region-drop GC          | H2 zero floor (~0.94× wasm)|
 | 8     | `lisp_trampoline.c` | tree-walker, explicit `while(TRUE)` (mal step 5) | H1 verification (~1.005× wasm) |
 
-All four share the same reader, printer, arena, primitives, and `eval_source`
-wasm ABI. Only the evaluator differs — that's what makes the A/B honest.
+All eight share the same reader (`reader.h`), printer, arena, primitives, and
+`eval_source` wasm ABI. Only the evaluator differs — that's what makes the A/B honest.
 
 The [`../prototype/`](../prototype/) directory is a **separate study**: a
 bytecode-line optimization ladder starting from an even simpler base than
 `bytecode.c` (no TCO, no GC), with one optimization added per step. Not the
-chronology of these four — read its README for the ladder structure.
+chronology of these eight — read its README for the ladder structure.

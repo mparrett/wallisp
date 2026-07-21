@@ -11,7 +11,7 @@ hand-rolled mark-sweep GC.
 ```bash
 bash build.sh                            # builds engines -> *.wasm (needs clang+wasm-ld and node)
 node harness/test_bc.mjs                 # bytecode correctness suite (35 cases × 2 engines)
-node harness/parity.mjs                  # cross-engine parity (55 programs × 8 engines)
+node harness/parity.mjs                  # cross-engine parity (136 programs × 8 engines)
 node harness/lisp-cli.mjs -e "(begin (define fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))) (fib 20))"
 # open web/tiny-lisp-vm.html in a browser — self-contained live REPL + writeup
 ```
@@ -27,13 +27,13 @@ standalone equivalents live in `baselines/bench.{js,c}`.
 ## What this is, and what it isn't
 
 This is a **measurement study**, not a Lisp you should embed in a product.
-Engines run ~370–530 lines (with `bytecode_gc` at ~850 lines as the
+Engines run ~450–660 lines (with `bytecode_gc` at ~960 lines as the
 finalist+experiment host), which is what makes A/B comparisons honest.
-PR1 added primitive arity/type validation, `/` and `mod`, and arithmetic
-overflow detection across all eight engines, so the shared semantic floor
-is real — `(+ 1)`, `(+ 'a 1)`, and `((lambda (x) x) 1 2)` all return
-`<error>` rather than silently degrading. `bytecode_gc` carries extensions
-(strings, `set-car!`/`set-cdr!` mutation) the other engines don't; the
+PR1/PR2 added primitive arity/type validation, `/` and `mod`, arithmetic
+overflow detection, `set!`, and pair mutation (`set-car!`/`set-cdr!`) across
+all eight engines, so the shared semantic floor is real — `(+ 1)`, `(+ 'a 1)`,
+and `((lambda (x) x) 1 2)` all return `<error>` rather than silently degrading.
+`bytecode_gc` carries one extension the other engines don't — strings — and the
 parity harness gates those programs accordingly. Some malformed programs
 still surface as bare `<error>`. The comparisons remain apples-to-apples
 on the shared core; don't mistake "agrees across engines" for "is a robust
