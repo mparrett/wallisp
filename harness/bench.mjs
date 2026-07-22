@@ -29,6 +29,7 @@ const ENGINES = [
   ['TW_tramp',    'lisp_trampoline_big.wasm',  false],  // explicit while(TRUE) (H1)
   ['TW_region',   'lisp_region_big.wasm',      true],   // region-drop GC (H2 zero floor)
   ['TW_gc',       'lisp_gc.wasm',              true],   // mark-sweep GC (H4)
+  ['TW_rc',       'lisp_rc.wasm',              true],   // refcount GC (H12)
   ['CEK',         'cek_big.wasm',              false],
   ['CEK_gc',      'cek_gc.wasm',               true],
   ['bytecode',    'bytecode_big.wasm',         false],

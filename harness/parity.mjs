@@ -20,6 +20,7 @@ const ENGINES = [
   'lisp_trampoline.wasm',
   'lisp_gc.wasm',
   'lisp_region.wasm',
+  'lisp_rc.wasm',
   'cek.wasm',
   'cek_gc.wasm',
   'bytecode.wasm',
