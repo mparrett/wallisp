@@ -206,6 +206,44 @@ filed only as a note, not a hypothesis.
 Net: a sharp **framing** entry (complexity-relocation; the OISC floor of the ISA
 spectrum our bytecode engines sit on), not a roadmap or engine input. No ticket.
 
+## justine.lol — "Lambda Calculus in 383 Bytes" (SectorLambda)
+
+https://justine.lol/lambda/
+
+Tromp's binary lambda calculus run by a 383-byte x86-64 ELF: a
+Church-Krivine-Tromp abstract machine (call-by-name, de Bruijn indices,
+monadic lazy-stream I/O) that fits garbage collection, lazy lists, and tail
+recursion into the byte budget. The friendly `lambda.c` is readable; the whole
+evaluator is a `switch` over VAR/APP/ABS/IOP.
+
+**The one piece that sharpens something for *us* — refcount GC as a missing
+axis.** Our GC-strategy story is three-valued (no-GC / mark-sweep /
+region-drop). Justine's collector is neither: it's **reference counting**, and
+it's tiny — `Gc()` decrements a per-closure `refs` and threads dead cells onto
+a free list (`frep`), `Alloc()` pops that list or `calloc`s. Refcounting is a
+legitimate fourth strategy we'd never enumerated. It trades the stop-the-world
+sweep pause for per-reference inc/dec traffic, and it leaks cycles — which
+Justine's *acyclic* lambda terms can't create but our mutable Lisp
+(`set-car!`/`set-cdr!`) can. That contrast is the interesting part: our whole
+bench suite is cycle-free, so RC would be measurable and valid on it, with the
+cycle boundary as a documented finding rather than a bug.
+
+**Outcome:** pre-registered as **H12** (out-of-repo note
+`h12_refcount_gc_preregistration.md`). Scoped to build `lisp_rc.c` first
+(tree-walker + refcount) for a clean same-architecture comparison against
+`lisp_gc.c` and `lisp_region.c`; `bytecode_rc.c` is a higher-risk follow-up
+(the value-stack/env reference surface is large). Not yet measured.
+
+**What we did NOT take — the Krivine/lazy machine itself.** The abstract
+machine is elegant (environment + a stack of unevaluated argument thunks; enter
+a lambda by popping a thunk into the env, look a variable up and force it), but
+it's **call-by-name**: arguments are passed unevaluated and forced on use.
+That's a *different observable semantics* than our strict call-by-value Lisp —
+side-effect order changes and some programs terminate lazily that diverge
+strictly — so a Krivine engine could never agree with the other eight on the
+parity harness. It would be a different language, not another implementation of
+ours. Interesting as a contrast, not an engine.
+
 ## What we explicitly chose NOT to take
 
 - **mal's 11-step pedagogical structure.** Good for "learn to write a Lisp,"
