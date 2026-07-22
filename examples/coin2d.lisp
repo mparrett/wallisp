@@ -45,12 +45,30 @@
         ((= d 5) "5") ((= d 6) "6") ((= d 7) "7") ((= d 8) "8") (else "9")))
 (define (num n) (if (< n 10) (digit n) (string-append (num (/ n 10)) (digit (mod n 10)))))
 
-(define (frame s) (string-append (rows 0 s) (string-append "score: " (num (g-sc s)))))
+; a fixed turn budget gives the game an end: 50 moves, then the world freezes.
+; `turns` is a top-level counter (like `st`), so no state-tuple plumbing changes.
+(define TURNS0 50)
+(define turns TURNS0)
+(define (statusline s)
+  (if (< 0 turns)
+      (string-append (string-append "score: " (num (g-sc s)))
+                     (string-append "\nturns: " (num turns)))
+      (string-append "GAME OVER\nscore: " (num (g-sc s)))))
+(define (frame s) (string-append (rows 0 s) (statusline s)))
 
 (define st (mk 1 1 8 4 0 12345))
 (define base (strheap-mark))
 (define (render) (begin (display (frame st)) (strheap-reset base)))
-(define (turn dx dy) (begin (set! st (step st dx dy)) (render)))
+; (0,0) is the driver's initial render and costs no turn; a real move spends one
+; while the budget lasts, otherwise the world freezes on GAME OVER.
+(define (turn dx dy)
+  (begin
+    (if (if (= dx 0) (= dy 0) ())
+        ()
+        (if (< 0 turns)
+            (begin (set! st (step st dx dy)) (set! turns (- turns 1)))
+            ()))
+    (render)))
 ; (tick) reads the host-written input slots instead of literal args, so the host
 ; can compile it once and rerun() it every frame — no per-turn recompile, no
 ; code[] growth. This is the unbounded-play path (harness/game.mjs uses it).
