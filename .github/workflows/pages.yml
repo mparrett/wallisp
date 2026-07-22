@@ -1,0 +1,46 @@
+name: Deploy Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least-privilege token scoped for Pages deploys.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Serialize deploys; don't cancel an in-flight one mid-publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # docs/ becomes the site root; web/ is nested under /web/.
+      # .nojekyll serves everything verbatim (no Jekyll transform of the notes).
+      - name: Assemble site
+        run: |
+          mkdir -p _site/web
+          cp -R docs/. _site/
+          cp -R web/.  _site/web/
+          touch _site/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
