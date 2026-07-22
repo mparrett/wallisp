@@ -3,6 +3,11 @@ name: Deploy Pages
 on:
   push:
     branches: [main]
+    # Only redeploy when published content or the workflow itself changes.
+    paths:
+      - 'docs/**'
+      - 'web/**'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 # Least-privilege token scoped for Pages deploys.
