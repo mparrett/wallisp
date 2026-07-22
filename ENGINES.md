@@ -1,33 +1,40 @@
 # The engines — comparison
 
-Side-by-side view of the nine engines in this project, organized along the
+Side-by-side view of the eight engines in this project, organized along the
 axes that matter for choosing one or reading the source. For the architectural
 tour see [`DEV.md`](DEV.md); for the empirical record (hypotheses, benchmarks,
 falsifications) see [`FINDINGS.md`](FINDINGS.md).
 
 ## The grid: what was built vs what wasn't
 
-|             | no GC          | mark-sweep        | region-drop          | refcount             |
-|-------------|----------------|-------------------|----------------------|----------------------|
-| tree-walker | `lisp.c` *     | `lisp_gc.c`       | `lisp_region.c`      | `lisp_rc.c`          |
-| CEK         | `cek.c`        | `cek_gc.c`        | **— not built**      | **— not built**      |
-| bytecode    | `bytecode.c`   | `bytecode_gc.c`   | **— not built**      | **— not built**      |
+|             | no GC          | mark-sweep        | region-drop          |
+|-------------|----------------|-------------------|----------------------|
+| tree-walker | `lisp.c` *     | `lisp_gc.c`       | `lisp_region.c`      |
+| CEK         | `cek.c`        | `cek_gc.c`        | **— not built**      |
+| bytecode    | `bytecode.c`   | `bytecode_gc.c`   | **— not built**      |
 
 \* tree-walker also has `lisp_trampoline.c`: structural variant of `lisp.c`
 with an explicit `while(TRUE)` trampoline. Same semantics, same arena, same
 no-GC. Built for H1 verification (confirmed: 1.005× wasm vs `lisp.c`,
 0.02% wasm size delta — clang TRE produces equivalent code).
 
-**The empty cells are honest.** Region-drop requires the live state to be
+Beyond the canonical eight there is one **appendix experiment**: `lisp_rc.c`,
+a tree-walker with a fourth GC strategy — **reference counting** (H12). It's
+not a peer engine, just the axis probe; kept for its negative result (refcount
+is the slowest GC strategy — see the glance table and "what each engine taught
+us"). The headline framing stays "eight."
+
+**The two empty cells are honest.** Region-drop requires the live state to be
 a downward-only chain anchored at a stable bottom — the global env. Neither
 CEK (heap continuations are the live state; they churn mid-eval and aren't
 anchored to env) nor bytecode (operand stack + call frames churn mid-eval)
 naturally satisfies that invariant. Region-drop is a tree-walker-shaped
-collector, not a universal one. Refcount is only built on the tree-walker so
-far too — the interesting comparison is same-architecture, and the result (H12,
-below) was decisive enough there that the CEK/bytecode ports weren't worth it.
-Mark-sweep is the universal collector here; each engine pays a different tax
-for hosting it (see "What each engine taught us" below).
+collector, not a universal one. Mark-sweep is the universal collector here;
+each engine pays a different tax for hosting it (see "What each engine
+taught us" below). The refcount experiment (`lisp_rc.c`, H12) was likewise
+built only on the tree-walker — the interesting comparison is
+same-architecture, and its result was decisive enough there that the
+CEK/bytecode ports weren't worth it.
 
 ## Engines at a glance
 

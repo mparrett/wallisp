@@ -2843,9 +2843,12 @@ volume*, not heap allocation.
 
 ### The engine
 
-Same recursive-tree-walker semantics as `lisp.c`; parity 141/141 across all
-nine engines, and the other suites stay green (test_bc 70/70, strings 44/44,
-call/cc 16/16). Two things differ from `lisp_gc.c`:
+Same recursive-tree-walker semantics as `lisp.c`; parity 141/141 across every
+engine including this appendix probe (the canonical eight plus `lisp_rc` = nine
+wasm modules in `parity.mjs`), and the other suites stay green (test_bc 70/70,
+strings 44/44, call/cc 16/16). `lisp_rc` is not a peer engine — it's the
+GC-axis experiment; the headline framing stays "eight." Two things differ from
+`lisp_gc.c`:
 
 - **No shadow stack.** A value lives because a cell or C local holds an owned
   reference; `eval()` follows an ownership protocol (returns owned, borrows
