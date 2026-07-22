@@ -2822,3 +2822,92 @@ less-cheap thing.
 Edits reverted. Pre-reg note preserved at
 `docs/notes/h11_branchless_predicates_preregistration.md` as
 the record of the experiment.
+
+## H12 — reference counting as a fourth GC strategy (`lisp_rc.c`) (FALSIFIED, wrong mechanism)
+
+Pre-registered 2026-07-22 (out-of-repo note; inspiration cited in
+`docs/notes/external_inspirations.md` — Justine Tunney's SectorLambda, whose
+Church-Krivine-Tromp VM refcounts closures in ~7 lines). The GC-strategy axis
+was three-valued — no-GC / region-drop / mark-sweep. This adds the fourth:
+`engines/lisp_rc.c`, a tree-walker with reference counting, holding the
+architecture fixed against `lisp_gc.c` (mark-sweep) and `lisp_region.c`
+(region-drop).
+
+**Pre-registered prediction:** the allocation-bound `nrev+sum` would be the
+*worst* case (RC/mark-sweep 1.2–1.8×), because inc/dec traffic "scales with
+allocation"; `fib`/`tak` near parity (1.0–1.15×); region-drop still wins.
+
+**Result: the direction holds (RC is the slowest GC strategy), but the
+allocation-scaling mechanism is falsified.** The RC penalty tracks *call
+volume*, not heap allocation.
+
+### The engine
+
+Same recursive-tree-walker semantics as `lisp.c`; parity 141/141 across all
+nine engines, and the other suites stay green (test_bc 70/70, strings 44/44,
+call/cc 16/16). Two things differ from `lisp_gc.c`:
+
+- **No shadow stack.** A value lives because a cell or C local holds an owned
+  reference; `eval()` follows an ownership protocol (returns owned, borrows
+  x/env) instead of the `R_save` root discipline.
+- **`eval()` is an explicit trampoline, not C-recursion + TRE.** Refcounting
+  must release the environment frame *after* a tail call's body finishes —
+  which clang's TRE gives no hook for (this is exactly why Justine's machine is
+  an explicit loop). The `for(;;)` reassigns `x`/`env` at tail positions and
+  releases the old owned frame per hop, so `tailsum(30000)` stays flat *and*
+  frames are reclaimed. Reclamation is real: a 500k-iteration allocate-and-
+  discard loop frees ~5M cells and completes in the 262144-cell arena where
+  the no-GC `lisp.c` returns `<error>`.
+
+AST/reader cells are pinned (`g_reading=1`: never counted, never freed), so the
+shared `reader.h` — which splices cell cdrs directly — needs no per-engine
+change, and closures capturing a pinned body stay valid.
+
+### Benchmark
+
+`node harness/bench.mjs`, best-of-25, cool-machine pass. `TW_rc` at the default
+262144-cell arena, matching `TW_gc` (both mid-eval collectors). Ratio is
+RC / mark-sweep within the tree-walker row.
+
+| benchmark      | TW_gc (ms) | TW_rc (ms) | RC/gc | shape                          |
+|----------------|------------|------------|-------|--------------------------------|
+| tak(18,12,6)   | 10.953     | 13.775     | 1.26  | extreme call volume, no alloc  |
+| ack(3,4)       | 2.189      | 2.663      | 1.22  | deep non-tail recursion        |
+| nrev+sum(150)  | 3.607      | 4.191      | 1.16  | **allocation-bound (O(n²))**   |
+| tailsum(30000) | 6.464      | 7.414      | 1.15  | tail-recursive loop            |
+| meta-fib(12)   | 16.532     | 18.770     | 1.14  | metacircular                   |
+| fib(24)        | 25.198     | 28.072     | 1.11  | scalar recursion               |
+
+Region-drop still wins the row overall (fib: region 18.77 < mark-sweep 25.20 <
+refcount 28.07). Native (`native_bench_*`) corroborates the *shape* — `tak`
+shows the largest penalty, `nrev` among the smallest — but is too noisy at
+these sub-30ms magnitudes for a reported native ratio; trust the wasm numbers.
+
+### What the prediction got wrong
+
+The predicted worst case (`nrev`, allocation-bound) is **mid-pack at 1.16×**,
+*below* the no-allocation `tak`/`ack`. The armchair "inc/dec scales with
+allocation" model was wrong. In this tree-walker the dominant retain/release
+traffic is the **environment-frame lifecycle**: every call builds a frame,
+retains its argument bindings, and releases the frame on return/tail-hop — not
+`cons`. So `tak` ("extreme call volume, no allocation") pays the most and
+`nrev` (heap-heavy but fewer calls per unit work) pays less. The penalty is
+roughly uniform (~1.11–1.26×) and call-volume-ordered.
+
+### The sharpened GC-strategy story — eager vs lazy
+
+**Refcount is the slowest GC strategy here — it loses to mark-sweep.** The
+reason is the load-bearing insight: on workloads that fit the arena, mark-sweep
+*barely runs* (observed GC counts of 0–4 across the whole suite), so its cost
+is near-zero — collection is *lazy*, deferred until pressure. Refcounting pays
+inc/dec *eagerly*, on every reference, whether or not memory pressure ever
+materializes. Lazy tracing beats eager counting until the arena is under
+sustained pressure and sweeps become frequent — which no current benchmark
+reaches. This orders the axis by per-operation cost: no-GC / region-drop
+(no bookkeeping) ≥ mark-sweep (lazy, rarely fires) > refcount (eager, always
+pays). Refcount would only pull ahead in a regime — tight arena, high sustained
+churn — none of these benchmarks occupy.
+
+Engine and harness wiring shipped (the `lisp_rc.wasm` module is checked in and
+in `parity.mjs`/`bench.mjs`). Unlike H11, this one *stays* — a fourth,
+genuinely different collector on the axis, kept for its negative result.

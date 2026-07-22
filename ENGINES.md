@@ -1,31 +1,33 @@
 # The engines — comparison
 
-Side-by-side view of the eight engines in this project, organized along the
+Side-by-side view of the nine engines in this project, organized along the
 axes that matter for choosing one or reading the source. For the architectural
 tour see [`DEV.md`](DEV.md); for the empirical record (hypotheses, benchmarks,
 falsifications) see [`FINDINGS.md`](FINDINGS.md).
 
 ## The grid: what was built vs what wasn't
 
-|             | no GC          | mark-sweep        | region-drop          |
-|-------------|----------------|-------------------|----------------------|
-| tree-walker | `lisp.c` *     | `lisp_gc.c`       | `lisp_region.c`      |
-| CEK         | `cek.c`        | `cek_gc.c`        | **— not built**      |
-| bytecode    | `bytecode.c`   | `bytecode_gc.c`   | **— not built**      |
+|             | no GC          | mark-sweep        | region-drop          | refcount             |
+|-------------|----------------|-------------------|----------------------|----------------------|
+| tree-walker | `lisp.c` *     | `lisp_gc.c`       | `lisp_region.c`      | `lisp_rc.c`          |
+| CEK         | `cek.c`        | `cek_gc.c`        | **— not built**      | **— not built**      |
+| bytecode    | `bytecode.c`   | `bytecode_gc.c`   | **— not built**      | **— not built**      |
 
 \* tree-walker also has `lisp_trampoline.c`: structural variant of `lisp.c`
 with an explicit `while(TRUE)` trampoline. Same semantics, same arena, same
 no-GC. Built for H1 verification (confirmed: 1.005× wasm vs `lisp.c`,
 0.02% wasm size delta — clang TRE produces equivalent code).
 
-**The two empty cells are honest.** Region-drop requires the live state to be
+**The empty cells are honest.** Region-drop requires the live state to be
 a downward-only chain anchored at a stable bottom — the global env. Neither
 CEK (heap continuations are the live state; they churn mid-eval and aren't
 anchored to env) nor bytecode (operand stack + call frames churn mid-eval)
 naturally satisfies that invariant. Region-drop is a tree-walker-shaped
-collector, not a universal one. Mark-sweep is the universal collector here;
-each engine pays a different tax for hosting it (see "What each engine
-taught us" below).
+collector, not a universal one. Refcount is only built on the tree-walker so
+far too — the interesting comparison is same-architecture, and the result (H12,
+below) was decisive enough there that the CEK/bytecode ports weren't worth it.
+Mark-sweep is the universal collector here; each engine pays a different tax
+for hosting it (see "What each engine taught us" below).
 
 ## Engines at a glance
 
@@ -35,10 +37,19 @@ taught us" below).
 | `lisp_trampoline.c`| tree-walker | none       |   460 |    131K cells   |  13.63            | 16.96           | 1.91×                  |
 | `lisp_region.c`   | tree-walker  | region-drop|   481 |    262K cells   |  13.44            | 15.95           | 1.80×                  |
 | `lisp_gc.c`       | tree-walker  | mark-sweep |   596 |    262K cells   |  16.61            | 22.59           | 2.55×                  |
+| `lisp_rc.c` †     | tree-walker  | refcount   |   560 |    262K cells   |  ~27.1            | ~28.07          | 3.58×                  |
 | `cek.c`           | CEK          | none       |   557 |    131K cells   |  27.81            | 34.58           | 3.90×                  |
 | `cek_gc.c`        | CEK          | mark-sweep |   659 |    262K cells   |  33.49            | 62.93           | 7.10×                  |
 | `bytecode.c`      | bytecode     | none       |   469 |    262K cells   |   5.92            |  9.33           | 1.05×                  |
 | `bytecode_gc.c`   | bytecode     | mark-sweep |   956 |    262K cells   |   5.91            |  8.87           | 1.00× (anchor)         |
+
+† `lisp_rc.c` was measured in a later pass (2026-07-22) on a warmer machine, so
+its absolute ms sit on a different thermal calibration than the rows above —
+they read high. Trust the portable `vs bytecode_gc` ratio (computed same-run)
+and the controlled RC-vs-mark-sweep comparison in FINDINGS.md "H12". Verdict:
+refcount is the *slowest* GC strategy here (~1.1–1.25× over mark-sweep),
+because mark-sweep is lazy and barely fires when the arena fits, while
+refcounting pays inc/dec eagerly on every reference.
 
 fib(24), best-of-25, both substrates (min-of-min over 3 passes for wasm,
 min over 10 runs for native — bench is noisy at sub-20ms). The full
@@ -100,6 +111,16 @@ FINDINGS.md for the full story.
   1.05-1.83× across mark-sweep engines vanishes when `cons` can't reach
   any function call; an additional small win comes from the lighter
   compare shape (`sp == 0` vs `cell_top >= MAX_CELLS`).
+
+- **`lisp_rc.c`** — H12, the fourth GC strategy. Refuted the prediction on
+  *mechanism*: the refcount penalty tracks call volume (env-frame
+  retain/release), not allocation, so `tak` costs more than the alloc-bound
+  `nrev`. And it's the slowest GC strategy on the axis — mark-sweep is lazy
+  (fires 0–4× when the arena fits) while refcount pays inc/dec eagerly on
+  every reference. Needed an explicit `eval()` trampoline rather than
+  C-recursion + TRE, because refcounting must release the tail-call frame
+  after its body runs — the same reason SectorLambda's machine is an explicit
+  loop (see `docs/notes/external_inspirations.md`).
 
 - **`cek.c`** — CEK's headline features were both redundant. 2.2× slower
   than the tree-walker on fib; the only axis it exclusively wins is deep
