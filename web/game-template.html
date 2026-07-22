@@ -53,7 +53,7 @@
 </div>
 <div id="term"></div>
 <div class="bar">
-  <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows — move</span>
+  <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>H</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd> / arrows — move</span>
   <span id="status">loading…</span>
 </div>
 <div id="pad" role="group" aria-label="touch controls">
@@ -118,10 +118,13 @@ const GAME_LISP = @@GAME_LISP@@;
 
   const MOVES = {
     ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
-    w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0],
+    w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0], // wasd
+    k: [0, -1], j: [0, 1], h: [-1, 0], l: [1, 0], // vim
   };
   term.onKey(({ domEvent }) => {
-    const mv = MOVES[domEvent.key];
+    // Lower-case the letter keys so Caps Lock / Shift (W vs w) still moves;
+    // the multi-char arrow names ("ArrowUp") hit the first lookup unchanged.
+    const mv = MOVES[domEvent.key] || MOVES[domEvent.key.toLowerCase()];
     if (!mv) return;
     domEvent.preventDefault();
     move(mv[0], mv[1]);

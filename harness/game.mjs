@@ -29,7 +29,7 @@ import { dirname, join } from 'path';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WASM = join(HERE, '..', 'bytecode_gc.wasm');
 const GAME = process.argv[2] || join(HERE, '..', 'examples', 'coin2d.lisp');
-const HELP = '[ wasd / arrows: move   q: quit ]';
+const HELP = '[ wasd / hjkl / arrows: move   q: quit ]';
 
 async function load() {
   const { instance } = await WebAssembly.instantiate(fs.readFileSync(WASM), {});
@@ -58,7 +58,9 @@ function keysFromBuffer(buf) {
   }
   return keys;
 }
-const MOVES = { up: [0, -1], w: [0, -1], down: [0, 1], s: [0, 1], left: [-1, 0], a: [-1, 0], right: [1, 0], d: [1, 0] };
+const MOVES = { up: [0, -1], w: [0, -1], k: [0, -1], down: [0, 1], s: [0, 1], j: [0, 1], left: [-1, 0], a: [-1, 0], h: [-1, 0], right: [1, 0], d: [1, 0], l: [1, 0] };
+// Case-fold letters so Caps Lock (W vs w) still moves; arrow names ('up') pass through.
+const moveFor = (k) => MOVES[k] || MOVES[k.toLowerCase()];
 const isQuit = (k) => k === 'q' || k === '\x03'; // q or Ctrl-C
 
 async function main() {
@@ -92,7 +94,7 @@ async function main() {
     process.stdout.write('initial:\n' + turn(0, 0) + '\n');
     for (const k of keys) {
       if (isQuit(k)) { process.stdout.write('\n[quit]\n'); break; }
-      const mv = MOVES[k];
+      const mv = moveFor(k);
       if (!mv) continue;
       const f = turn(...mv);
       process.stdout.write(`\nkey ${k}:\n${f}\n`);
@@ -115,7 +117,7 @@ async function main() {
   process.stdin.on('data', (buf) => {
     for (const k of keysFromBuffer(buf)) {
       if (isQuit(k)) return quit();
-      const mv = MOVES[k];
+      const mv = moveFor(k);
       if (!mv) continue;
       const f = turn(...mv);
       if (f === '<error>') return quit('tick returned <error>.');
