@@ -4,6 +4,15 @@
 
 A small Lisp built as eight engines across three architectures (tree-walker, CEK machine, bytecode VM) and three GC strategies (none, mark-sweep, region-drop), compiled to freestanding `wasm32` with **zero imports**, then driven by measurement to a finalist: a bytecode VM with TCO and a hand-rolled mark-sweep GC.
 
+## Live
+
+All of these run in the browser off the same zero-imports wasm — nothing to install:
+
+- **[Findings write-up](https://mparrett.github.io/wallisp/)** — headline results with charts, code snippets, and methodology in one self-contained page. The friendly entry point.
+- **[Tiny Lisp VM](https://mparrett.github.io/wallisp/web/tiny-lisp-vm.html)** — the machined-into-WebAssembly writeup with a live REPL.
+- **[TUI game](https://mparrett.github.io/wallisp/web/game.html)** — the coin-collector running on the finalist engine in xterm.js.
+- **[Standalone REPL](https://mparrett.github.io/wallisp/web/wallisp-standalone.html)** — a minimal `bytecode_gc` REPL.
+
 ## Quick start
 
 ```bash
@@ -40,7 +49,7 @@ The path there (persistent session, raw frame output, an O(1) per-frame string r
 
 ## Learn more
 
-- **[docs/index.html](docs/index.html)** — external write-up: the headline findings with charts, code snippets, and the methodology, in a single self-contained HTML page. The friendly entry point if you're just visiting.
+- **[docs/index.html](docs/index.html)** ([live](https://mparrett.github.io/wallisp/)) — external write-up: the headline findings with charts, code snippets, and the methodology, in a single self-contained HTML page. The friendly entry point if you're just visiting.
 - **[ENGINES.md](ENGINES.md)** — side-by-side comparison of the eight engines: what each one is, what it costs, and what it taught us. Start here if you want the map.
 - **[DEV.md](DEV.md)** — architectural tour: the language, the engines, the bytecode ISA, the GC, the optimization ladder, the hand-editable WAT track, and open threads.
 - **[FINDINGS.md](FINDINGS.md)** — the empirical record: benchmark tables, pre-registered hypotheses, and surprises that refuted armchair guesses.
