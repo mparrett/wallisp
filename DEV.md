@@ -142,6 +142,15 @@ in at the repo root — `node harness/test_bc.mjs` and `node harness/lisp-cli.mj
 work as-is with just `node`. `harness/bench.mjs` is the exception: it loads the
 `*_big.wasm` variants, which aren't prebuilt and require `build.sh`.
 
+**Toolchain of record for those tracked artifacts: Homebrew clang 22.1.6 on
+macOS arm64.** All nine rebuild byte-for-byte under it; `just verify-artifacts`
+(`tests/verify_artifacts.sh`) checks that and leaves the tree untouched either
+way. Byte-identity is *version*-specific, not a correctness property — measured
+2026-07-28, Debian clang 19.1.7 and 21.1.8 each produce nine modules that differ
+from the tracked ones while still building clean and importing zero symbols. So
+a mismatch means "a different compiler built these," not "something broke."
+Check your `clang --version` before concluding otherwise.
+
 ### Compiler flags
 
 All engines: `--target=wasm32 -nostdlib -fno-builtin -Wl,--no-entry
