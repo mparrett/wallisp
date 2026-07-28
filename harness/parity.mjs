@@ -1,10 +1,25 @@
-// harness/parity.mjs — cross-engine semantic parity.
+// harness/parity.mjs — cross-engine semantic parity, with pinned values.
 //
-// All eight engines export the same wasm ABI and claim to implement the same
+// All nine engines export the same wasm ABI and claim to implement the same
 // language. bench.mjs cross-checks results at runtime (it flags ⚠ DISAGREE),
-// but it's a benchmark, not a failing test. This is the failing test:
-// every engine, every program, must produce identical output. Exits 1 on
-// any disagreement so CI catches engine drift.
+// but it's a benchmark, not a failing test. This is the failing test, and it
+// asserts two independent things for every program:
+//
+//   1. VALUE      — the reference engine produces the pinned expected output.
+//   2. AGREEMENT  — every other engine matches the reference.
+//
+// Agreement alone is not enough. 48 of these programs expect `<error>`, and a
+// change that broke all nine engines the same way — a shared reader.h
+// regression, say — would agree perfectly and pass. That is this project's
+// documented trap #1: a bare `<error>` looks like a blazing-fast result. So
+// the value is pinned independently of the consensus. Exits 1 on either.
+//
+// The pinned values were captured from the suite's own output and reviewed by
+// hand, so they characterise intended behaviour rather than proving it. Where
+// a value encodes a deliberate choice rather than an obvious truth — `(car nil)`
+// is an error, not `()`; `mod` truncates toward zero like C's `%`, so
+// `(mod -7 3)` is `-1` — the choice is the project's, and changing it should be
+// a deliberate edit to the expected value here.
 //
 //   node harness/parity.mjs
 //
@@ -33,161 +48,197 @@ const ENGINES = [
 // rebinding (must defeat any inline-prim shortcut), edge cases on car/cdr,
 // and (since PR1c) primitive arity / type errors, division, modulo, and the
 // 30-bit overflow trap. Designed for "must match across engines," not for
-// "must match a known answer" — we use the tree-walker (lisp.wasm) as the
-// reference and require all seven others to agree with it.
+// a known answer — every entry now carries both: the tree-walker (lisp.wasm)
+// is the reference the other eight must agree with, and its own output is
+// checked against the pinned value.
 const PROGRAMS = [
   // arithmetic
-  '(+ 1 2 3)',
-  '(- 100 7 3)',
-  '(* 2 3 4)',
-  '(* 6 7)',
-  '(+ (* 2 3) (- 10 4))',
-  '(= 0 0)',
-  '(= 0 1)',
-  '(< 3 5)',
-  '(< 5 3)',
+  ['(+ 1 2 3)', "6"],
+  ['(- 100 7 3)', "90"],
+  ['(* 2 3 4)', "24"],
+  ['(* 6 7)', "42"],
+  ['(+ (* 2 3) (- 10 4))', "12"],
+  ['(= 0 0)', "t"],
+  ['(= 0 1)', "()"],
+  ['(< 3 5)', "t"],
+  ['(< 5 3)', "()"],
 
   // booleans / nil
-  '(if (< 1 2) 1 2)',
-  '(if (= 1 2) 1 2)',
-  '(null? nil)',
-  '(null? (quote ()))',
-  '(null? (quote (1)))',
-  '(pair? (quote (1 2)))',
-  '(pair? nil)',
+  ['(if (< 1 2) 1 2)', "1"],
+  ['(if (= 1 2) 1 2)', "2"],
+  ['(null? nil)', "t"],
+  ['(null? (quote ()))', "t"],
+  ['(null? (quote (1)))', "()"],
+  ['(pair? (quote (1 2)))', "t"],
+  ['(pair? nil)', "()"],
 
   // cons / car / cdr
-  '(cons 1 2)',
-  '(cons 1 (cons 2 (cons 3 nil)))',
-  '(car (quote (a b c)))',
-  '(cdr (quote (a b c)))',
-  '(car (cons 9 8))',
-  '(cdr (cons 9 8))',
+  ['(cons 1 2)', "(1 . 2)"],
+  ['(cons 1 (cons 2 (cons 3 nil)))', "(1 2 3)"],
+  ['(car (quote (a b c)))', "a"],
+  ['(cdr (quote (a b c)))', "(b c)"],
+  ['(car (cons 9 8))', "9"],
+  ['(cdr (cons 9 8))', "8"],
 
   // quote
-  '(quote a)',
-  '(quote (1 2 3))',
-  '(quote ((1 2) (3 4)))',
+  ['(quote a)', "a"],
+  ['(quote (1 2 3))', "(1 2 3)"],
+  ['(quote ((1 2) (3 4)))', "((1 2) (3 4))"],
 
   // let
-  '(let ((x 5)) x)',
-  '(let ((x 5) (y 7)) (+ x y))',
-  '(let ((x 1)) (let ((y 2)) (+ x y)))',
+  ['(let ((x 5)) x)', "5"],
+  ['(let ((x 5) (y 7)) (+ x y))', "12"],
+  ['(let ((x 1)) (let ((y 2)) (+ x y)))', "3"],
 
   // reader sugar: fn(a, b) ≡ (fn a b), from the shared reader.h. Covered on the
   // wasm engines here — the native-only reader_sugar.sh doesn't exercise these.
-  '(begin (define add (lambda (x y) (+ x y))) add(2, 3))',
-  '(begin (define add (lambda (x y) (+ x y))) add(add(1, 2), 3))',
-  '(begin (define sq (lambda (x) (* x x))) sq(4))',
-  '(begin (define k (lambda () 42)) k())',
-  'car((quote (7 8 9)))',
+  ['(begin (define add (lambda (x y) (+ x y))) add(2, 3))', "5"],
+  ['(begin (define add (lambda (x y) (+ x y))) add(add(1, 2), 3))', "6"],
+  ['(begin (define sq (lambda (x) (* x x))) sq(4))', "16"],
+  ['(begin (define k (lambda () 42)) k())', "42"],
+  ['car((quote (7 8 9)))', "7"],
 
   // lambda + closures
-  '((lambda (x) (* x x)) 9)',
-  '((lambda (x y) (+ x y)) 3 4)',
-  '(begin (define add (lambda (a) (lambda (b) (+ a b)))) ((add 10) 32))',
-  '(begin (define make-counter (lambda (n) (lambda () (+ n 1)))) ((make-counter 41)))',
+  ['((lambda (x) (* x x)) 9)', "81"],
+  ['((lambda (x y) (+ x y)) 3 4)', "7"],
+  ['(begin (define add (lambda (a) (lambda (b) (+ a b)))) ((add 10) 32))', "42"],
+  ['(begin (define make-counter (lambda (n) (lambda () (+ n 1)))) ((make-counter 41)))', "42"],
 
   // recursion (non-tail)
-  '(begin (define fact (lambda (n) (if (< n 1) 1 (* n (fact (- n 1)))))) (fact 5))',
-  '(begin (define fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))) (fib 10))',
-  '(begin (define len (lambda (l) (if (null? l) 0 (+ 1 (len (cdr l)))))) (len (quote (a b c d e))))',
+  ['(begin (define fact (lambda (n) (if (< n 1) 1 (* n (fact (- n 1)))))) (fact 5))', "120"],
+  ['(begin (define fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))) (fib 10))', "55"],
+  ['(begin (define len (lambda (l) (if (null? l) 0 (+ 1 (len (cdr l)))))) (len (quote (a b c d e))))', "5"],
 
   // recursion (tail)
-  '(begin (define loop (lambda (i a) (if (= i 0) a (loop (- i 1) (+ a i))))) (loop 100 0))',
-  '(begin (define cd (lambda (n) (if (= n 0) (quote done) (cd (- n 1))))) (cd 500))',
+  ['(begin (define loop (lambda (i a) (if (= i 0) a (loop (- i 1) (+ a i))))) (loop 100 0))', "5050"],
+  ['(begin (define cd (lambda (n) (if (= n 0) (quote done) (cd (- n 1))))) (cd 500))', "done"],
 
   // mutual recursion
-  '(begin (define ev (lambda (n) (if (= n 0) (quote t) (od (- n 1))))) (define od (lambda (n) (if (= n 0) (quote ()) (ev (- n 1))))) (ev 12))',
-  '(begin (define ev (lambda (n) (if (= n 0) (quote t) (od (- n 1))))) (define od (lambda (n) (if (= n 0) (quote ()) (ev (- n 1))))) (od 7))',
+  ['(begin (define ev (lambda (n) (if (= n 0) (quote t) (od (- n 1))))) (define od (lambda (n) (if (= n 0) (quote ()) (ev (- n 1))))) (ev 12))', "t"],
+  ['(begin (define ev (lambda (n) (if (= n 0) (quote t) (od (- n 1))))) (define od (lambda (n) (if (= n 0) (quote ()) (ev (- n 1))))) (od 7))', "t"],
 
   // list reverse + sum (small)
-  '(begin (define ap (lambda (a b) (if (null? a) b (cons (car a) (ap (cdr a) b))))) (define rv (lambda (l) (if (null? l) nil (ap (rv (cdr l)) (cons (car l) nil))))) (rv (quote (1 2 3 4 5))))',
-  '(begin (define sm (lambda (l) (if (null? l) 0 (+ (car l) (sm (cdr l)))))) (sm (quote (1 2 3 4 5 6 7 8 9 10))))',
+  ['(begin (define ap (lambda (a b) (if (null? a) b (cons (car a) (ap (cdr a) b))))) (define rv (lambda (l) (if (null? l) nil (ap (rv (cdr l)) (cons (car l) nil))))) (rv (quote (1 2 3 4 5))))', "(5 4 3 2 1)"],
+  ['(begin (define sm (lambda (l) (if (null? l) 0 (+ (car l) (sm (cdr l)))))) (sm (quote (1 2 3 4 5 6 7 8 9 10))))', "55"],
 
   // primitive rebinding — must NOT be silently bypassed by any inline-prim path
-  '(begin (define + (lambda (a b) 99)) (+ 1 2))',
-  '(begin (define * (lambda (a b) 0)) (* 7 8))',
+  ['(begin (define + (lambda (a b) 99)) (+ 1 2))', "99"],
+  ['(begin (define * (lambda (a b) 0)) (* 7 8))', "0"],
 
   // comments
-  '; comment\n(+ 2 40) ; trailing',
+  ['; comment\n(+ 2 40) ; trailing', "42"],
 
   // arity check: under- and over-supply error; exact match still works.
-  '((lambda (x y) x) 1)',
-  '((lambda (x) x) 1 2)',
-  '((lambda (x y) (+ x y)) 1 2)',
+  ['((lambda (x y) x) 1)', "<error>"],
+  ['((lambda (x) x) 1 2)', "<error>"],
+  ['((lambda (x y) (+ x y)) 1 2)', "3"],
 
   // define-form shorthand: (define (name args...) body)
-  '(begin (define (sq x) (* x x)) (sq 9))',
-  '(begin (define (add a b) (+ a b)) (add 3 4))',
-  '(begin (define (fact n) (if (< n 1) 1 (* n (fact (- n 1))))) (fact 5))',
+  ['(begin (define (sq x) (* x x)) (sq 9))', "81"],
+  ['(begin (define (add a b) (+ a b)) (add 3 4))', "7"],
+  ['(begin (define (fact n) (if (< n 1) 1 (* n (fact (- n 1))))) (fact 5))', "120"],
 
   // cond: clause walk, else, no-else fallthrough, empty, and a recursive use
   // that exercises GC re-entry through a cond-rewritten branch.
-  "(cond ((< 1 2) 'a) (else 'b))",
-  "(cond ((= 1 2) 'a) ((= 3 3) 'b) (else 'c))",
-  "(cond ((= 1 2) 'a) ((= 3 4) 'b))",
-  '(cond)',
-  "(begin (define (sgn n) (cond ((< n 0) -1) ((< 0 n) 1) (else 0))) (cons (sgn -7) (cons (sgn 0) (cons (sgn 9) nil))))",
-  '(begin (define (len l) (cond ((null? l) 0) (else (+ 1 (len (cdr l)))))) (len (quote (a b c d e))))',
+  ["(cond ((< 1 2) 'a) (else 'b))", "a"],
+  ["(cond ((= 1 2) 'a) ((= 3 3) 'b) (else 'c))", "b"],
+  ["(cond ((= 1 2) 'a) ((= 3 4) 'b))", "()"],
+  ['(cond)', "()"],
+  ["(begin (define (sgn n) (cond ((< n 0) -1) ((< 0 n) 1) (else 0))) (cons (sgn -7) (cons (sgn 0) (cons (sgn 9) nil))))", "(-1 0 1)"],
+  ['(begin (define (len l) (cond ((null? l) 0) (else (+ 1 (len (cdr l)))))) (len (quote (a b c d e))))', "5"],
 
   // ---- PR1: primitive validation ------------------------------------------
   // arity errors on primitives
-  '(+)', '(+ 1)', '(-)', '(- 1)', '(*)',
-  '(cons)', '(cons 1)', '(cons 1 2 3)',
-  '(car)', '(cdr 1 2)',
-  '(=)', '(= 1)', '(< 1)',
-  '(null?)', '(null? 1 2)',
+  ['(+)', "<error>"],
+  ['(+ 1)', "<error>"],
+  ['(-)', "<error>"],
+  ['(- 1)', "<error>"],
+  ['(*)', "<error>"],
+  ['(cons)', "<error>"],
+  ['(cons 1)', "<error>"],
+  ['(cons 1 2 3)', "<error>"],
+  ['(car)', "<error>"],
+  ['(cdr 1 2)', "<error>"],
+  ['(=)', "<error>"],
+  ['(= 1)', "<error>"],
+  ['(< 1)', "<error>"],
+  ['(null?)', "<error>"],
+  ['(null? 1 2)', "<error>"],
   // type errors on primitives
-  "(+ 'a 1)", "(- 1 'a)", "(* 'a 'b)",
-  '(car 5)', '(car nil)', '(cdr 5)',
-  "(< 'a 'b)",
+  ["(+ 'a 1)", "<error>"],
+  ["(- 1 'a)", "<error>"],
+  ["(* 'a 'b)", "<error>"],
+  ['(car 5)', "<error>"],
+  ['(car nil)', "<error>"],
+  ['(cdr 5)', "<error>"],
+  ["(< 'a 'b)", "<error>"],
   // = stays polymorphic identity (metacircular evaluator needs symbol compare)
-  "(= 'a 'a)", "(= 'a 'b)", '(= nil nil)',
+  ["(= 'a 'a)", "t"],
+  ["(= 'a 'b)", "()"],
+  ['(= nil nil)', "t"],
   // division and modulo (PR1 added /, mod)
-  '(/ 6 2)', '(/ 7 2)', '(/ -7 2)',
-  '(/ 1 0)', '(/)', '(/ 5)',
-  '(mod 7 3)', '(mod -7 3)', '(mod 1 0)', '(mod 5)',
+  ['(/ 6 2)', "3"],
+  ['(/ 7 2)', "3"],
+  ['(/ -7 2)', "-3"],
+  ['(/ 1 0)', "<error>"],
+  ['(/)', "<error>"],
+  ['(/ 5)', "<error>"],
+  ['(mod 7 3)', "1"],
+  ['(mod -7 3)', "-1"],
+  ['(mod 1 0)', "<error>"],
+  ['(mod 5)', "<error>"],
   // 30-bit overflow trap on arithmetic
-  '(+ 536870900 100)',
-  '(- -536870900 100)',
-  '(* 100000 100000)',
-  '(* 23000 23000)',         // fits (5.29e8 < 5.37e8)
-  '(+ 536870910 1)',         // FIX_MAX boundary OK
-  '(+ 536870911 1)',
-  '(/ -536870912 -1)',       // FIX_MIN / -1 = FIX_MAX+1
+  ['(+ 536870900 100)', "<error>"],
+  ['(- -536870900 100)', "<error>"],
+  ['(* 100000 100000)', "<error>"],
+  ['(* 23000 23000)', "529000000"],
+  ['(+ 536870910 1)', "536870911"],
+  ['(+ 536870911 1)', "<error>"],
+  ['(/ -536870912 -1)', "<error>"],
 
   // ---- PR2: mutation (set! / set-car! / set-cdr!) -------------------------
-  '(begin (define x 5) (set! x 10) x)',
-  '(begin (define x 5) (set! x (+ x 1)) x)',
-  '(set! y 10)',                                      // unbound set! → error
-  '(set!)', '(set! x)',
-  '(begin (define x 5) (set! x 1 2))',                // over-arity → error
-  '(set! 5 10)',                                      // non-symbol → error
-  '(begin (define c (cons 1 2)) (set-car! c 9) c)',
-  '(begin (define c (cons 1 2)) (set-cdr! c 9) c)',
-  '(begin (define c (cons 1 (cons 2 nil))) (set-car! (cdr c) 99) c)',
-  '(set-car! 5 9)', '(set-cdr! nil 9)',               // type errors
-  '(set-car!)', '(set-car! (cons 1 2))',              // arity errors
-  '(set-car! (cons 1 2) 9 10)',
+  ['(begin (define x 5) (set! x 10) x)', "10"],
+  ['(begin (define x 5) (set! x (+ x 1)) x)', "6"],
+  ['(set! y 10)', "<error>"],
+  ['(set!)', "<error>"],
+  ['(set! x)', "<error>"],
+  ['(begin (define x 5) (set! x 1 2))', "<error>"],
+  ['(set! 5 10)', "<error>"],
+  ['(begin (define c (cons 1 2)) (set-car! c 9) c)', "(9 . 2)"],
+  ['(begin (define c (cons 1 2)) (set-cdr! c 9) c)', "(1 . 9)"],
+  ['(begin (define c (cons 1 (cons 2 nil))) (set-car! (cdr c) 99) c)', "(1 99)"],
+  ['(set-car! 5 9)', "<error>"],
+  ['(set-cdr! nil 9)', "<error>"],
+  ['(set-car!)', "<error>"],
+  ['(set-car! (cons 1 2))', "<error>"],
+  ['(set-car! (cons 1 2) 9 10)', "<error>"],
   // killer test: mutation visible through a closure with lexical state
-  "(begin (define counter (let ((n 0)) (lambda () (begin (set! n (+ n 1)) n)))) (counter) (counter) (counter))",
-  '(begin (define n 0) (define inc (lambda () (begin (set! n (+ n 1)) n))) (inc) (inc) (inc) n)',
-  '(begin (define c (cons 1 2)) (set-car! c 9))',    // set-car! returns new value
-  '(begin (define x 1) (set! x 42))',                 // set! returns new value
+  ["(begin (define counter (let ((n 0)) (lambda () (begin (set! n (+ n 1)) n)))) (counter) (counter) (counter))", "3"],
+  ['(begin (define n 0) (define inc (lambda () (begin (set! n (+ n 1)) n))) (inc) (inc) (inc) n)', "3"],
+  ['(begin (define c (cons 1 2)) (set-car! c 9))', "9"],
+  ['(begin (define x 1) (set! x 42))', "42"],
 
   // ── number? / symbol? predicates (post-Tier-B; metacircular-eval prep) ──
-  '(number? 42)', '(number? -1)', '(number? 0)',
-  '(number? nil)', '(number? t)', "(number? 'a)",
-  "(number? '(1 2 3))",
-  '(number?)', '(number? 1 2)',                       // arity errors
-  "(symbol? 'a)", "(symbol? 'foo)",
-  '(symbol? nil)', '(symbol? t)',
-  '(symbol? 5)', "(symbol? '(a b))",
-  '(symbol?)', "(symbol? 'a 'b)",                     // arity errors
+  ['(number? 42)', "t"],
+  ['(number? -1)', "t"],
+  ['(number? 0)', "t"],
+  ['(number? nil)', "()"],
+  ['(number? t)', "()"],
+  ["(number? 'a)", "()"],
+  ["(number? '(1 2 3))", "()"],
+  ['(number?)', "<error>"],
+  ['(number? 1 2)', "<error>"],
+  ["(symbol? 'a)", "t"],
+  ["(symbol? 'foo)", "t"],
+  ['(symbol? nil)', "()"],
+  ['(symbol? t)', "()"],
+  ['(symbol? 5)', "()"],
+  ["(symbol? '(a b))", "()"],
+  ['(symbol?)', "<error>"],
+  ["(symbol? 'a 'b)", "<error>"],
   // composes with other predicates — used by the upcoming metacircular eval
-  "(if (number? 5) 'num 'sym)",
-  "(if (symbol? 'x) 'sym 'num)",
+  ["(if (number? 5) 'num 'sym)", "num"],
+  ["(if (symbol? 'x) 'sym 'num)", "sym"],
 ];
 
 async function load(file) {
@@ -206,27 +257,42 @@ const main = async () => {
   for (const f of ENGINES) engines.push([f, await load(f)]);
   const [refName, refRun] = engines[0];
 
-  let failures = 0, programs = 0;
-  for (const src of PROGRAMS) {
-    programs++;
-    const expected = refRun(src);
+  let wrong = 0, disagreed = 0;
+  for (const [src, expected] of PROGRAMS) {
+    const ref = refRun(src);
+
+    // (1) VALUE. Catches a regression that hits every engine at once, which
+    // the agreement check below is structurally blind to.
+    if (ref !== expected) {
+      wrong++;
+      console.log(`WRONG     ${JSON.stringify(src).slice(0, 70)}`);
+      console.log(`  expected ${JSON.stringify(expected)}`);
+      console.log(`  ${refName.padEnd(24)} => ${JSON.stringify(ref)}`);
+    }
+
+    // (2) AGREEMENT. Compared against the reference's ACTUAL output, not the
+    // pinned one, so a shared regression reports as one WRONG rather than
+    // eight spurious DISAGREEs.
     const diffs = [];
     for (let i = 1; i < engines.length; i++) {
       const [name, run] = engines[i];
       const got = run(src);
-      if (got !== expected) diffs.push({ name, got });
+      if (got !== ref) diffs.push({ name, got });
     }
     if (diffs.length) {
-      failures++;
+      disagreed++;
       console.log(`DISAGREE  ${JSON.stringify(src).slice(0, 70)}`);
-      console.log(`  ${refName.padEnd(24)} => ${JSON.stringify(expected)}`);
+      console.log(`  ${refName.padEnd(24)} => ${JSON.stringify(ref)}`);
       for (const { name, got } of diffs) {
         console.log(`  ${name.padEnd(24)} => ${JSON.stringify(got)}`);
       }
     }
   }
-  console.log(`\n${programs - failures}/${programs} programs agree across all ${engines.length} engines`);
-  if (failures) process.exit(1);
+
+  const n = PROGRAMS.length;
+  console.log(`\n${n - wrong}/${n} programs match their pinned value`);
+  console.log(`${n - disagreed}/${n} programs agree across all ${engines.length} engines`);
+  if (wrong || disagreed) process.exit(1);
 };
 
 main().catch(e => { console.error(e); process.exit(1); });
