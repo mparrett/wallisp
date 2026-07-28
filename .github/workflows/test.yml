@@ -30,10 +30,8 @@ jobs:
       # the repo root. Each suite exits non-zero on failure, so `set -e` (the
       # default for a `run:` block) is enough to fail the job.
       #
-      # NOT run here: standalone/test.mjs needs standalone/wallisp.wasm, which
-      # is gitignored and requires a wasm toolchain (bash standalone/build.sh).
-      # tests/reader_sugar.sh needs the native CLI (bash build.sh --native).
-      # Both belong with a build job — see the P0 plan's A0.2.
+      # The two suites that DO need a toolchain (standalone/test.mjs and
+      # tests/reader_sugar.sh) run in the `full-suites` job below.
       - name: Cross-engine parity (141 programs x 9 engines)
         run: node harness/parity.mjs
 
@@ -48,3 +46,38 @@ jobs:
 
       - name: Persistent-session contract
         run: node harness/test_session.mjs
+
+  full-suites:
+    name: Suites needing a toolchain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Ubuntu's stock clang carries the wasm32 target and lld provides
+      # wasm-ld — verified on ubuntu:24.04 (clang 18.1.3). No LLVM apt repo
+      # needed here: this job only has to BUILD, not reproduce byte-identical
+      # artifacts, and both scripts below pass -fno-builtin themselves.
+      - name: Install clang + lld
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq clang lld
+
+      # standalone/wallisp.wasm is gitignored, so this suite cannot run without
+      # building it first — which is why it isn't in the no-toolchain job.
+      - name: Standalone VM (80 tests)
+        run: |
+          bash standalone/build.sh
+          node standalone/test.mjs
+
+      # reader_sugar.sh drives a NATIVE CLI, not wasm. Deliberately not
+      # `bash build.sh --native`: that builds 9 bench + 9 CLI binaries plus the
+      # baseline, and this suite needs exactly one. It honours a CLI override,
+      # so build just that engine (~0.4s). Plain clang; no wasm involved.
+      - name: Reader sugar (21 tests, native CLI)
+        run: |
+          clang -O2 -I. -Iengines -Wno-unknown-attributes -Wno-ignored-attributes \
+                -Wno-macro-redefined -DENGINE_SRC='"engines/lisp.c"' \
+                -o native_cli_lisp native/main.c
+          CLI=./native_cli_lisp bash tests/reader_sugar.sh
