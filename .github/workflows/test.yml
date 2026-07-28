@@ -1,0 +1,50 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only: this workflow builds nothing and publishes nothing.
+permissions:
+  contents: read
+
+# One run per ref; a newer push supersedes an in-flight check.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suites:
+    name: Core suites (checked-in wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # No build step and no clang: every engine below is a tracked *.wasm at
+      # the repo root. Each suite exits non-zero on failure, so `set -e` (the
+      # default for a `run:` block) is enough to fail the job.
+      #
+      # NOT run here: standalone/test.mjs needs standalone/wallisp.wasm, which
+      # is gitignored and requires a wasm toolchain (bash standalone/build.sh).
+      # tests/reader_sugar.sh needs the native CLI (bash build.sh --native).
+      # Both belong with a build job — see the P0 plan's A0.2.
+      - name: Cross-engine parity (141 programs x 9 engines)
+        run: node harness/parity.mjs
+
+      - name: String parity (bytecode_gc)
+        run: node harness/parity_strings.mjs
+
+      - name: call/cc parity (CEK engines)
+        run: node harness/parity_callcc.mjs
+
+      - name: Bytecode correctness
+        run: node harness/test_bc.mjs
+
+      - name: Persistent-session contract
+        run: node harness/test_session.mjs
