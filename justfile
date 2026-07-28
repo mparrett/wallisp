@@ -14,7 +14,10 @@ build:
 build-native:
     bash build.sh --native
 
-# Core suites — run on the checked-in *.wasm, no build step needed
+# Core suites. The harness/ suites run on the checked-in *.wasm with no build
+# step; standalone/test.mjs is the exception — it loads standalone/wallisp.wasm,
+# which is gitignored, so run `bash standalone/build.sh` once first. CI runs the
+# no-build subset (.github/workflows/test.yml).
 test:
     node harness/parity.mjs
     node harness/parity_strings.mjs
