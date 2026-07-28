@@ -235,6 +235,16 @@ gaps; GC overhead has a native floor (~1.3x) that V8 amplifies.
 
 ### JS runtimes
 
+**Node 20 is the floor.** `cek.wasm` / `cek_gc.wasm` are built with
+`-mtail-call` and emit `return_call` (opcode `0x12`); V8 unflagged wasm tail
+calls in 11.2, which lands in Node 20. On Node 18 every CEK-touching harness
+dies with `CompileError: Invalid opcode 0x12 (enable with
+--experimental-wasm-return_call)` — `parity.mjs` and `parity_callcc.mjs` fail,
+while bytecode-only suites like `test_bc.mjs` still pass. `build.sh`'s
+zero-imports assertion instantiates every module, so it needs Node 20 too; the
+CI matrix installs node explicitly rather than trusting the container's distro
+package for exactly this reason.
+
 Verified: **Node** (V8) and **Bun** (JavaScriptCore) — both run the harnesses
 unchanged, and their `bench.mjs` ratios agree within ~5% across two independent
 JIT engines (cross-validation of "trust ratios, not magnitudes").
