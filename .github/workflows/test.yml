@@ -81,3 +81,51 @@ jobs:
                 -Wno-macro-redefined -DENGINE_SRC='"engines/lisp.c"' \
                 -o native_cli_lisp native/main.c
           CLI=./native_cli_lisp bash tests/reader_sugar.sh
+
+  # Zero imports is the project's headline property and it is COMPILER-sensitive:
+  # without -fno-builtin, clang synthesizes libc calls that become env.* imports.
+  # Measured 2026-07-28 — building engines/lisp.c without the flag:
+  #   clang 19.1.7 -> clean      clang 21.1.8 -> env.strlen      clang 22.1.6 -> env.strlen
+  # So the regression really did arrive across the LLVM-20 boundary, and the
+  # matrix straddles it: the 19 leg would still pass while 21 caught it. The
+  # breakage is also engine-specific (bytecode_gc.c is immune — it ships its own
+  # memset/memcpy), which is why build.sh asserts over every module, not just the
+  # finalist.
+  #
+  # Byte-identity is deliberately NOT checked here — different clang versions
+  # legitimately emit different, still-correct modules. That check is
+  # `just verify-artifacts`, pinned to the toolchain of record in DEV.md.
+  zero-imports:
+    name: Zero imports (clang ${{ matrix.clang }})
+    runs-on: ubuntu-latest
+    container: silkeh/clang:${{ matrix.clang }}
+    strategy:
+      fail-fast: false
+      matrix:
+        clang: ['19', '21']    # add '22' once an image exists (tags stop at 21)
+    steps:
+      # The clang images carry clang + wasm-ld but not git, which actions/checkout
+      # needs (it otherwise degrades to a REST tarball). xz-utils/ca-certificates
+      # are for setup-node's download. Must run BEFORE checkout.
+      - name: Install git (image has clang + wasm-ld, not git)
+        run: apt-get update -qq && apt-get install -y -qq git xz-utils ca-certificates
+
+      - uses: actions/checkout@v4
+
+      # Do NOT rely on the image's distro node. build.sh's assertion instantiates
+      # every module, and cek*.wasm uses return_call (wasm tail calls) — Node 18
+      # rejects opcode 0x12 unless launched with --experimental-wasm-return_call,
+      # so the assertion dies with a CompileError that looks like a wasm bug
+      # rather than "your node is too old." Debian bookworm (the clang 19 image)
+      # ships exactly that Node 18. Verified: clang 19 + node 18 fails on a clean
+      # checkout; clang 19 + node 22 passes 17/17.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Run build.sh verbatim rather than re-listing the compiler flags here —
+      # a matrix that drifts from the real build would assert the wrong thing.
+      # It compiles 17 modules (9 engines + 3 prototype + 5 big variants) and
+      # fails on any module importing a symbol (build.sh lines 68-79).
+      - name: build.sh — compile all modules, assert zero imports
+        run: bash build.sh
