@@ -19,7 +19,8 @@
 //
 //   node harness/bench_callcc.mjs
 
-import fs from 'fs';
+
+import { loadEngine } from './engine.mjs';
 
 const N = 2000;
 const REPS = 25;
@@ -69,16 +70,11 @@ const SYNC_PLAIN = `
   (define loop (lambda (i acc) (if (= i 0) acc (loop (- i 1) (+ acc (wrap i))))))
   (loop ${N} 0))`;
 
+// Shared ABI handshake — see harness/engine.mjs. gc_count is engine-dependent
+// (undefined on the no-GC builds), which the caller already handles.
 async function load(file) {
-  const { instance } = await WebAssembly.instantiate(fs.readFileSync(new URL('../'+file, import.meta.url)), {});
-  const ex = instance.exports, mem = ex.memory;
-  const run = (src) => {
-    const e = new TextEncoder().encode(src);
-    new Uint8Array(mem.buffer, ex.input_ptr(), e.length).set(e);
-    const n = ex.eval_source(e.length);
-    return new TextDecoder().decode(new Uint8Array(mem.buffer, ex.output_ptr(), n));
-  };
-  return { run, gc_count: ex.gc_count };
+  const eng = await loadEngine(file);
+  return { run: eng.run, gc_count: eng.exports.gc_count };
 }
 
 function best(eng, src, reps = REPS) {

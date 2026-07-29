@@ -14,6 +14,7 @@
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { loadEngine } from './engine.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WASM = join(HERE, '..', 'disasm.wasm');
@@ -34,10 +35,13 @@ if (args[0] === '-e') {
   process.exit(2);
 }
 
-const { instance } = await WebAssembly.instantiate(fs.readFileSync(WASM), {});
-const ex = instance.exports, mem = ex.memory;
-const e = new TextEncoder().encode(src);
-if (e.length > 8192) { console.error(`source too large (${e.length} > 8192 bytes) — the engine truncates at 8 KB (INCAP), which would disassemble a partial program`); process.exit(1); }
-new Uint8Array(mem.buffer, ex.input_ptr(), e.length).set(e);
-const n = ex.eval_source(e.length);
-process.stdout.write(new TextDecoder().decode(new Uint8Array(mem.buffer, ex.output_ptr(), n)));
+// Shared ABI handshake — see harness/engine.mjs, which also carries the INCAP
+// guard this file used to implement itself (truncated source would disassemble
+// a partial program).
+const { run } = await loadEngine(WASM);
+try {
+  process.stdout.write(run(src));
+} catch (e) {
+  console.error(`disasm: ${e.message}`);
+  process.exit(1);
+}

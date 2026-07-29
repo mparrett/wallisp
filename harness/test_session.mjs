@@ -5,6 +5,14 @@
 // reset_session clears it, and that eval_source is unchanged and stateless.
 //
 //   node harness/test_session.mjs
+//
+// This file deliberately keeps its OWN ABI handshake rather than importing
+// harness/engine.mjs like the other drivers. It is the contract test for that
+// ABI — it pokes exports by name (`ex[fn]`, so one instance can be driven
+// through both eval_source and eval_persistent) and asserts the session exports
+// exist at all. Routing it through the shared loader would mean a bug in the
+// loader could mask an ABI break, and an ABI break could present as a loader
+// bug. The duplication here is the point.
 
 import fs from 'fs';
 import { fileURLToPath } from 'url';

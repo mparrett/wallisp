@@ -19,6 +19,7 @@
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { loadEngine } from './engine.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WASM = join(HERE, '..', 'bytecode_gc.wasm');
@@ -49,16 +50,11 @@ const DEFS = `
 `;
 
 async function main() {
-  const { instance: { exports: ex } } = await WebAssembly.instantiate(fs.readFileSync(WASM), {});
-  const enc = new TextEncoder(), dec = new TextDecoder();
-  const evl = (s) => {
-    const d = enc.encode(s);
-    if (d.length > 8192) throw new Error(`program too large (${d.length} > 8192)`);
-    new Uint8Array(ex.memory.buffer, ex.input_ptr(), d.length).set(d);
-    const n = ex.eval_persistent(d.length);
-    return dec.decode(new Uint8Array(ex.memory.buffer, ex.output_ptr(), n));
-  };
-  const setup = () => { ex.reset_session(); evl(DEFS); };
+  // Shared ABI handshake + INCAP guard — see harness/engine.mjs.
+  const eng = await loadEngine(WASM);
+  const ex = eng.exports;                       // strheap_used / gc_count read directly
+  const evl = (s) => eng.evalPersistent(s);
+  const setup = () => { eng.resetSession(); evl(DEFS); };
 
   // 1. Capability: render a few turns as a grid.
   setup();

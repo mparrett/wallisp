@@ -23,24 +23,16 @@ import fs from 'fs';
 import readline from 'readline';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { loadEngine } from './engine.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WASM = join(HERE, '..', 'bytecode_gc.wasm');
 const PRELUDE = join(HERE, '..', 'standalone', 'prelude.lisp');
-const INCAP = 8192;
 
-async function load() {
-  const { instance } = await WebAssembly.instantiate(fs.readFileSync(WASM), {}); // {} = no imports
-  return instance.exports;
-}
-
-function evalLine(ex, src) {
-  const data = new TextEncoder().encode(src);
-  if (data.length > INCAP) throw new Error(`line too large (${data.length} > ${INCAP} bytes)`);
-  new Uint8Array(ex.memory.buffer, ex.input_ptr(), data.length).set(data);
-  const n = ex.eval_persistent(data.length);
-  return new TextDecoder().decode(new Uint8Array(ex.memory.buffer, ex.output_ptr(), n));
-}
+// Loading, the ABI handshake, and the INCAP guard are shared — see
+// harness/engine.mjs. `eng` is the loader's handle; evalLine keeps its old
+// (eng, src) shape so the call sites below are unchanged.
+const evalLine = (eng, src) => eng.evalPersistent(src);
 
 // Feed the shared prelude (not, >, >=, <=, length, reverse, fold, append, map,
 // filter, assoc) into the session so the REPL starts with the small stdlib
@@ -55,8 +47,8 @@ function loadPrelude(ex) {
 }
 
 async function main() {
-  const ex = await load();
-  ex.reset_session();
+  const ex = await loadEngine(WASM);
+  ex.resetSession();
   const havePrelude = loadPrelude(ex);
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'wallisp> ' });
@@ -66,7 +58,7 @@ async function main() {
   rl.on('line', (line) => {
     const src = line.trim();
     if (src === '') { rl.prompt(); return; }
-    if (src === ':reset') { ex.reset_session(); loadPrelude(ex); console.log('; session cleared'); rl.prompt(); return; }
+    if (src === ':reset') { ex.resetSession(); loadPrelude(ex); console.log('; session cleared'); rl.prompt(); return; }
     try {
       console.log(evalLine(ex, src));
     } catch (e) {

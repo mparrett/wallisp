@@ -13,6 +13,7 @@
 
 import fs from 'fs';
 import { spawnSync } from 'child_process';
+import { loadEngine } from './engine.mjs';
 
 // Metacircular eval: same algorithm shape as the direct fib benchmark, but
 // run *through* a tiny Lisp interpreter written in wallisp's own Lisp. The
@@ -103,16 +104,11 @@ const BENCHMARKS = [
    META_SRC],
 ];
 
+// Shared ABI handshake — see harness/engine.mjs. gc_count is undefined on the
+// no-GC engines; `best()` below already treats it as optional.
 async function load(file) {
-  const { instance } = await WebAssembly.instantiate(fs.readFileSync(new URL('../'+file, import.meta.url)), {});
-  const ex = instance.exports, mem = ex.memory;
-  const run = (src) => {
-    const e = new TextEncoder().encode(src);
-    new Uint8Array(mem.buffer, ex.input_ptr(), e.length).set(e);
-    const n = ex.eval_source(e.length);
-    return new TextDecoder().decode(new Uint8Array(mem.buffer, ex.output_ptr(), n));
-  };
-  return { run, gc_count: ex.gc_count };
+  const eng = await loadEngine(file);
+  return { run: eng.run, gc_count: eng.exports.gc_count };
 }
 
 function best(eng, src, reps = 25) {

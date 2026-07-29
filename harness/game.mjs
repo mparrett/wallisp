@@ -25,27 +25,19 @@
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { loadEngine } from './engine.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WASM = join(HERE, '..', 'bytecode_gc.wasm');
 const GAME = process.argv[2] || join(HERE, '..', 'examples', 'coin2d.lisp');
 const HELP = '[ wasd / hjkl / arrows: move   q: quit ]';
 
-async function load() {
-  const { instance } = await WebAssembly.instantiate(fs.readFileSync(WASM), {});
-  return instance.exports;
-}
-
-function makeEval(ex) {
-  const enc = new TextEncoder(), dec = new TextDecoder();
-  return (src) => {
-    const d = enc.encode(src);
-    if (d.length > 8192) throw new Error(`source too large (${d.length} > 8192)`);
-    new Uint8Array(ex.memory.buffer, ex.input_ptr(), d.length).set(d);
-    const n = ex.eval_persistent(d.length);
-    return dec.decode(new Uint8Array(ex.memory.buffer, ex.output_ptr(), n));
-  };
-}
+// Shared ABI handshake + INCAP guard — see harness/engine.mjs. The frame loop
+// in main() still drives rerun()/input_slots_ptr()/output_ptr() through the raw
+// exports: those are bytecode_gc-specific, and the loop deliberately re-reads
+// memory.buffer every frame rather than going through evalPersistent.
+const load = loadEngine;
+const makeEval = (eng) => (src) => eng.evalPersistent(src);
 
 // Decode a stdin chunk into logical keys (letters as-is; ESC[A/B/C/D arrows).
 function keysFromBuffer(buf) {
@@ -64,10 +56,11 @@ const moveFor = (k) => MOVES[k] || MOVES[k.toLowerCase()];
 const isQuit = (k) => k === 'q' || k === '\x03'; // q or Ctrl-C
 
 async function main() {
-  const ex = await load();
-  const evl = makeEval(ex);
+  const eng = await load(WASM);
+  const ex = eng.exports;              // raw exports for the per-frame loop below
+  const evl = makeEval(eng);
   const dec = new TextDecoder();
-  ex.reset_session();
+  eng.resetSession();
   if (evl(fs.readFileSync(GAME, 'utf8')) === '<error>') { // defines (tick), renders itself, owns `base`
     console.error(`error: ${GAME} failed to load (<error>) — syntax error or arena exhaustion in the game file.`);
     process.exit(1);

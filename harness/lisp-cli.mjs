@@ -12,25 +12,13 @@
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { loadEngine } from './engine.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WASM = join(HERE, '..', 'bytecode_gc.wasm');
 
-async function load() {
-  const bytes = fs.readFileSync(WASM);
-  const { instance } = await WebAssembly.instantiate(bytes, {}); // {} = no imports
-  return instance.exports;
-}
-
-function evalSource(ex, src) {
-  const mem = ex.memory;
-  const data = new TextEncoder().encode(src);
-  // input buffer in the module is 8192 bytes (INCAP); guard against overflow.
-  if (data.length > 8192) throw new Error(`source too large (${data.length} > 8192 bytes)`);
-  new Uint8Array(mem.buffer, ex.input_ptr(), data.length).set(data);
-  const n = ex.eval_source(data.length);
-  return new TextDecoder().decode(new Uint8Array(mem.buffer, ex.output_ptr(), n));
-}
+// Loading and the ABI handshake (including the INCAP overflow guard that used
+// to live here) are shared — see harness/engine.mjs.
 
 async function readStdin() {
   const chunks = [];
@@ -53,8 +41,8 @@ async function main() {
     process.exit(2);
   }
 
-  const ex = await load();
-  const result = evalSource(ex, src);
+  const { run } = await loadEngine(WASM);
+  const result = run(src);
   console.log(result);
   // surface evaluation errors as a nonzero exit so it composes in shell pipelines
   if (result === '<error>') process.exit(1);
