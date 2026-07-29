@@ -5,6 +5,54 @@ Every number below was measured in Node (V8) on wasm built with `clang -O2`,
 best-of-25 runs, matched 20M-cell arenas. Treat absolute ms as relative, not
 portable — the *ratios* are the point.
 
+## What is in here
+
+32 sections, appended in the order they were measured. Every
+pre-registered hypothesis is listed with how it actually landed — the
+falsified ones are the point of the document, not an embarrassment in it.
+
+**Baseline results and methodology**
+
+| section | verdict |
+|---|---|
+| [The engines](#the-engines) |  |
+| [Speed: fib, best-of-25 (ms)](#speed-fib-best-of-25-ms) |  |
+| [Two surprises that refuted the original hypotheses](#two-surprises-that-refuted-the-original-hypotheses) | **refuted** |
+| [Recursion-depth behavior (all need enough memory; the *mechanism* differs)](#recursion-depth-behavior-all-need-enough-memory-the-mechanism-differs) |  |
+| [Takeaways](#takeaways) |  |
+| [Does the 2.6x generalize? (multi-benchmark — run `node bench.mjs`)](#does-the-26x-generalize-multi-benchmark--run-node-benchmjs) |  |
+| [OP_TAILCALL: proper tail calls in the bytecode VM (measured tradeoff)](#op_tailcall-proper-tail-calls-in-the-bytecode-vm-measured-tradeoff) |  |
+| [Honest caveats](#honest-caveats) |  |
+| [Native build — separating engine cost from substrate cost](#native-build--separating-engine-cost-from-substrate-cost) |  |
+| [Hand-written JS and C baselines — the substrate ladder, extended](#hand-written-js-and-c-baselines--the-substrate-ladder-extended) |  |
+| [Build flag: `-O2` vs `-Oz` — half the wasm size, free or better on V8 (except CEK)](#build-flag--o2-vs--oz--half-the-wasm-size-free-or-better-on-v8-except-cek) |  |
+| [Metacircular evaluator — Lisp-in-Lisp on each engine](#metacircular-evaluator--lisp-in-lisp-on-each-engine) |  |
+| [OP_CALL primitive inlining in `bytecode_gc.c`](#op_call-primitive-inlining-in-bytecode_gcc) |  |
+
+**Pre-registered experiments**
+
+| hypothesis | verdict |
+|---|---|
+| [H4 — GC ported into CEK (`cek_gc.c`)](#h4--gc-ported-into-cek-cek_gcc) |  |
+| [H4 — GC ported into the tree-walker (`lisp_gc.c`)](#h4--gc-ported-into-the-tree-walker-lisp_gcc) |  |
+| [H2 zero floor — region-drop GC (`lisp_region.c`)](#h2-zero-floor--region-drop-gc-lisp_regionc) |  |
+| [H1 verification — explicit trampoline tree-walker (`lisp_trampoline.c`)](#h1-verification--explicit-trampoline-tree-walker-lisp_trampolinec) |  |
+| [PR1a — primitive validation tax on the tree-walker (`lisp.c`)](#pr1a--primitive-validation-tax-on-the-tree-walker-lispc) |  |
+| [PR1b — falsification gate confirmed on `bytecode_gc.c`](#pr1b--falsification-gate-confirmed-on-bytecode_gcc) | **confirmed** |
+| [PR1c — mechanical port to the remaining six engines + a flipped ordering](#pr1c--mechanical-port-to-the-remaining-six-engines--a-flipped-ordering) |  |
+| [PR2a — mutation (`set!` / `set-car!` / `set-cdr!`) on `lisp.c`](#pr2a--mutation-set--set-car--set-cdr-on-lispc) |  |
+| [PR2b — mutation on `bytecode_gc.c` (the falsification gate)](#pr2b--mutation-on-bytecode_gcc-the-falsification-gate) |  |
+| [PR2c — mechanical port to the remaining six engines](#pr2c--mechanical-port-to-the-remaining-six-engines) |  |
+| [H7 — does CEK finally win with `call/cc`?](#h7--does-cek-finally-win-with-callcc-falsified) | **falsified** |
+| [H6 — non-uniform heap GC tax on `bytecode_gc.c`](#h6--non-uniform-heap-gc-tax-on-bytecode_gcc-falsified-lower-window) | **falsified** |
+| [H8 — does bytecode_gc's win generalize to metacircular eval?](#h8--does-bytecode_gcs-win-generalize-to-metacircular-eval-falsified-preserves-direction) | **falsified** |
+| [H9 — Futamura projection #1: PE residual headroom on no-allocation programs](#h9--futamura-projection-1-pe-residual-headroom-on-no-allocation-programs-confirmed-magnitude-wildly-underestimated) | **confirmed** |
+| [H10 — `$`-marked source-to-source PE: opt-in comptime folding in wallisp](#h10---marked-source-to-source-pe-opt-in-comptime-folding-in-wallisp-confirmed-magnitude-reuse-dependent) | **confirmed** |
+| [H9.B-v3 — Futamura cons-v1: comptime lists in the specializer](#h9b-v3--futamura-cons-v1-comptime-lists-in-the-specializer-confirmed-prediction-badly-low) | **confirmed** |
+| [H11 — branchless predicate primitives in `bytecode_gc.c`](#h11--branchless-predicate-primitives-in-bytecode_gcc-falsified-wrong-direction) | **falsified** |
+| [H12 — reference counting as a fourth GC strategy (`lisp_rc.c`)](#h12--reference-counting-as-a-fourth-gc-strategy-lisp_rcc-falsified-wrong-mechanism) | **falsified** |
+| [H13 — `OP_TAILCALL`'s inline range had drifted from `OP_CALL`'s](#h13--op_tailcalls-inline-range-had-drifted-from-op_calls-falsified-on-magnitude-a-second-effect-isolated) | **falsified** |
+
 ## The engines
 
 - **`lisp.c` — tree-walker.** Recursively evaluates the cons-tree. Simplest.
