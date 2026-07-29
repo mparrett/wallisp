@@ -8,18 +8,32 @@
 //   1. VALUE      — the reference engine produces the pinned expected output.
 //   2. AGREEMENT  — every other engine matches the reference.
 //
-// Agreement alone is not enough. 48 of these programs expect `<error>`, and a
-// change that broke all nine engines the same way — a shared reader.h
-// regression, say — would agree perfectly and pass. That is this project's
-// documented trap #1: a bare `<error>` looks like a blazing-fast result. So
+// Agreement alone is not enough: a change that broke all nine engines the same
+// way — a shared reader.h regression, say — would agree perfectly and pass. So
 // the value is pinned independently of the consensus. Exits 1 on either.
 //
+// HOW MUCH THE PINS ACTUALLY ASSERT. For the 93 value-bearing programs, a lot:
+// the exact printed result. For the 48 that expect `<error>`, much less. Every
+// engine prints one opaque token for every failure — arity, type, unbound
+// symbol, divide-by-zero, 30-bit overflow, arena exhaustion, parse failure all
+// collapse to `<error>` at a single print site. Pinning it asserts "this still
+// fails", not "this still fails for the right reason". A program that stopped
+// parsing would be indistinguishable from one correctly rejecting its
+// arguments. Differentiated errors would fix that; until then, don't read a
+// green run as validating the error paths.
+//
 // The pinned values were captured from the suite's own output and reviewed by
-// hand, so they characterise intended behaviour rather than proving it. Where
-// a value encodes a deliberate choice rather than an obvious truth — `(car nil)`
-// is an error, not `()`; `mod` truncates toward zero like C's `%`, so
-// `(mod -7 3)` is `-1` — the choice is the project's, and changing it should be
-// a deliberate edit to the expected value here.
+// hand, so they characterise intended behaviour rather than proving it — the
+// engines are the only specification there is. Two pins are worth knowing
+// before you "fix" them:
+//
+//   * `(car nil)` is `<error>`, not `()`. Deliberate: an explicit `!is_cons`
+//     guard in each engine's PR_CAR.
+//   * `(mod -7 3)` is `-1` and `(/ -7 2)` is `-3`. These are bare C `%` and `/`
+//     with only a zero-divisor guard, i.e. R7RS `remainder`/`truncate` rather
+//     than `modulo`/`floor`, despite the name `mod`. Inherited from C, not
+//     argued for anywhere in the sources — pinned so that changing it has to be
+//     a deliberate edit here rather than a silent drift.
 //
 //   node harness/parity.mjs
 //
@@ -258,36 +272,44 @@ const main = async () => {
   const [refName, refRun] = engines[0];
 
   let wrong = 0, disagreed = 0;
-  for (const [src, expected] of PROGRAMS) {
+  // Programs are printed truncated, and 15 of them exceed the width. Two differ
+  // only past it AND share an expected value (the mutual-recursion pair), so the
+  // index is printed to keep every failure line identifiable.
+  const label = (i, src) => `[${String(i).padStart(3)}] ${JSON.stringify(src).slice(0, 70)}`;
+
+  PROGRAMS.forEach(([src, expected], i) => {
     const ref = refRun(src);
 
     // (1) VALUE. Catches a regression that hits every engine at once, which
     // the agreement check below is structurally blind to.
     if (ref !== expected) {
       wrong++;
-      console.log(`WRONG     ${JSON.stringify(src).slice(0, 70)}`);
+      console.log(`WRONG     ${label(i, src)}`);
       console.log(`  expected ${JSON.stringify(expected)}`);
       console.log(`  ${refName.padEnd(24)} => ${JSON.stringify(ref)}`);
     }
 
-    // (2) AGREEMENT. Compared against the reference's ACTUAL output, not the
-    // pinned one, so a shared regression reports as one WRONG rather than
-    // eight spurious DISAGREEs.
+    // (2) AGREEMENT, against the reference's ACTUAL output rather than the
+    // pinned one. A trade, not a free win: it keeps a shared regression to a
+    // single WRONG instead of eight spurious DISAGREEs, at the cost of eight
+    // spurious DISAGREEs when the reference ALONE regresses. Both schemes catch
+    // both faults; this way optimises for the shared-regression case, which is
+    // the one this suite exists to catch.
     const diffs = [];
-    for (let i = 1; i < engines.length; i++) {
-      const [name, run] = engines[i];
+    for (let j = 1; j < engines.length; j++) {
+      const [name, run] = engines[j];
       const got = run(src);
       if (got !== ref) diffs.push({ name, got });
     }
     if (diffs.length) {
       disagreed++;
-      console.log(`DISAGREE  ${JSON.stringify(src).slice(0, 70)}`);
+      console.log(`DISAGREE  ${label(i, src)}`);
       console.log(`  ${refName.padEnd(24)} => ${JSON.stringify(ref)}`);
       for (const { name, got } of diffs) {
         console.log(`  ${name.padEnd(24)} => ${JSON.stringify(got)}`);
       }
     }
-  }
+  });
 
   const n = PROGRAMS.length;
   console.log(`\n${n - wrong}/${n} programs match their pinned value`);
