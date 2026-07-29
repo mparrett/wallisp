@@ -47,7 +47,7 @@ CEK/bytecode ports weren't worth it.
 | `lisp_rc.c` †     | tree-walker  | refcount   |   560 |    262K cells   |  ~27.1            | ~28.07          | 3.58×                  |
 | `cek.c`           | CEK          | none       |   557 |    131K cells   |  27.81            | 34.58           | 3.90×                  |
 | `cek_gc.c`        | CEK          | mark-sweep |   659 |    262K cells   |  33.49            | 62.93           | 7.10×                  |
-| `bytecode.c`      | bytecode     | none       |   469 |    262K cells   |   5.92            |  9.33           | 1.05×                  |
+| `bytecode.c` ‡    | bytecode     | none       |   469 |    262K cells   |   5.92            |  9.33           | 1.05×                  |
 | `bytecode_gc.c`   | bytecode     | mark-sweep |   956 |    262K cells   |   5.91            |  8.87           | 1.00× (anchor)         |
 
 † `lisp_rc.c` was measured in a later pass (2026-07-22) on a warmer machine, so
@@ -57,6 +57,20 @@ and the controlled RC-vs-mark-sweep comparison in FINDINGS.md "H12". Verdict:
 refcount is the *slowest* GC strategy here (~1.1–1.25× over mark-sweep),
 because mark-sweep is lazy and barely fires when the arena fits, while
 refcounting pays inc/dec eagerly on every reference.
+
+‡ **This pair differs in two variables, not one.** `bytecode.c` and
+`bytecode_gc.c` differ in the collector *and* the inline-prim fast path, so
+unlike the tree-walker and CEK rows this ratio is not a GC tax read straight
+off. `bytecode_gc`'s `OP_CALL` / `OP_TAILCALL` short-circuit 2-arg arithmetic
+and 1-arg predicates on the operand stack; `bytecode.c` has no such arm and
+always conses an argument list into `apply_prim`. A controlled same-engine A/B
+(FINDINGS.md, "OP_CALL primitive inlining in `bytecode_gc.c`") puts that path
+at **1.41× on fib(24)**, 0.97–1.41× across the suite — the same order as the
+GC tax it sits opposite. So the 1.05× is a collection cost partly
+cancelled by an inlining win, and post-PR1c the sign flips by program shape:
+`bytecode_gc` wins prim-density-bound shapes (fib, tailsum), `bytecode` wins
+allocation- or call-bound ones (nrev+sum, tak). For the isolated cost of the
+collector, read the same-engine A/B rather than this column.
 
 fib(24), best-of-25, both substrates (min-of-min over 3 passes for wasm,
 min over 10 runs for native — bench is noisy at sub-20ms). The full
