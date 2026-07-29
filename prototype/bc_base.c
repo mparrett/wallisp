@@ -1,6 +1,7 @@
-// bytecode.c — the same tiny Lisp, but COMPILED to bytecode and run on a stack
-// machine, for an apples-to-apples speed A/B against the tree-walker (lisp.c)
-// and the CEK machine (cek.c). Same reader, printer, arena, primitives.
+// bc_base.c — optimization ladder rung 1: bc_orig plus an instruction counter
+// (icount export), so later rungs can be compared on instructions dispatched
+// and not only wall clock. OP_CALL still conses an arg list into apply_prim.
+// The counter was added by hand-editing WAT first — see wat/bc_instr.wat.
 //
 // The idea: walk each expression's cons-tree ONCE at compile time into a flat
 // u32 instruction array, resolving variables to lexical (depth,index) addresses

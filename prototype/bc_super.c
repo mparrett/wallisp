@@ -1,6 +1,7 @@
-// bytecode.c — the same tiny Lisp, but COMPILED to bytecode and run on a stack
-// machine, for an apples-to-apples speed A/B against the tree-walker (lisp.c)
-// and the CEK machine (cek.c). Same reader, printer, arena, primitives.
+// bc_super.c — ladder rung 3: the COMPILER emits dedicated superinstructions
+// (OP_PADD/PSUB/PMUL/PEQ/PLT). Fastest of the three (1.6x) and the only rung
+// that cuts the instruction count (-18%), but it bakes in "primitives are not
+// rebound" and so diverges on (define +). See DEV.md, the optimization ladder.
 //
 // The idea: walk each expression's cons-tree ONCE at compile time into a flat
 // u32 instruction array, resolving variables to lexical (depth,index) addresses

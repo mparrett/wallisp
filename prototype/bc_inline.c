@@ -1,6 +1,7 @@
-// bytecode.c — the same tiny Lisp, but COMPILED to bytecode and run on a stack
-// machine, for an apples-to-apples speed A/B against the tree-walker (lisp.c)
-// and the CEK machine (cek.c). Same reader, printer, arena, primitives.
+// bc_inline.c — ladder rung 2: the VM checks is_prim at RUNTIME and inlines
+// + - * = < on the operand stack, skipping the arg-list cons. Rebind-safe,
+// because it reads the live value: (define +) still wins. 1.2x over bc_base
+// at an identical instruction count — the win is all in the arg consing.
 //
 // The idea: walk each expression's cons-tree ONCE at compile time into a flat
 // u32 instruction array, resolving variables to lexical (depth,index) addresses

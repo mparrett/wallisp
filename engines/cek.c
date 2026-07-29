@@ -1,4 +1,4 @@
-// lisp.c — a tiny Lisp, freestanding, compiles to wasm32 (no libc).
+// cek.c — a tiny Lisp on a CEK machine, freestanding wasm32 (no libc).
 //
 // Design in one breath:
 //   * Values are 32-bit tagged words. Low 2 bits = tag.
