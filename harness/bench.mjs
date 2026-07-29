@@ -1,15 +1,15 @@
-// bench.mjs — canonical small-interpreter benchmarks across the four engines.
+// bench.mjs — canonical small-interpreter benchmarks across every engine.
 //   node bench.mjs
 // Add a benchmark by appending to BENCHMARKS. Each program is self-contained
 // (every eval_source re-inits, so no state persists between runs — include all
-// defines in the source). Results are cross-checked: all four engines must
-// agree, else it's flagged. Speed is best-of-N (min) to suppress GC/scheduler
+// defines in the source). Results are cross-checked: every engine must agree,
+// else it's flagged. Speed is best-of-N (min) to suppress GC/scheduler
 // noise. Absolute ms are V8-on-wasm; trust the ratios, not the magnitudes.
 //
-// bytecode_gc.wasm uses its DEFAULT arena (262K cells) deliberately — that's
-// what exposes GC pressure so the gc_count column is meaningful. The other
-// three use *_big variants (16M cells) because they have no GC and would
-// exhaust the arena on heavy benchmarks otherwise.
+// The GC engines (lisp_gc, lisp_rc, cek_gc, bytecode_gc) use their DEFAULT
+// arenas deliberately — that's what exposes GC pressure so the gc_count column
+// is meaningful. The no-GC engines use *_big variants (16M cells) because they
+// would exhaust a default arena on heavy benchmarks otherwise.
 
 import fs from 'fs';
 import { spawnSync } from 'child_process';
@@ -21,8 +21,21 @@ import { spawnSync } from 'child_process';
 // fib(12) lands in the 3-30ms range; small enough to keep bench runtime
 // reasonable, large enough that noise doesn't dominate.
 const META_N = 12;
-const META_SRC = fs.readFileSync(new URL('../baselines/metacircular.lisp', import.meta.url), 'utf8')
-  .replace(/\b8\)\)/, `${META_N}))`);
+// Scale the workload by rewriting the literal tagged `; META_N` in the .lisp.
+// This used to be a bare `.replace(/\b8\)\)/, ...)`, which would silently
+// rewrite the wrong expression the moment any other `8))` appeared earlier in
+// the file — the benchmark would then measure something else with no error.
+// Anchor on the marker and assert it occurs exactly once.
+const META_SRC = (() => {
+  const raw = fs.readFileSync(new URL('../baselines/metacircular.lisp', import.meta.url), 'utf8');
+  const marker = /^(\s*)\d+(\)\)\s*; META_N\b)/gm;
+  const hits = raw.match(marker) || [];
+  if (hits.length !== 1) {
+    throw new Error(`bench: expected exactly one "; META_N" marker in baselines/metacircular.lisp, found ${hits.length}. ` +
+                    `Tag the fib argument with "; META_N" (see that file) so the workload can be scaled.`);
+  }
+  return raw.replace(marker, `$1${META_N}$2`);
+})();
 
 const ENGINES = [
   ['tree-walker', 'lisp_big.wasm',             false],
