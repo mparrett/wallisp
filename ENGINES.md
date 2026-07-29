@@ -48,7 +48,7 @@ CEK/bytecode ports weren't worth it.
 | `cek.c`           | CEK          | none       |   557 |    131K cells   |  27.81            | 34.58           | 3.90×                  |
 | `cek_gc.c`        | CEK          | mark-sweep |   659 |    262K cells   |  33.49            | 62.93           | 7.10×                  |
 | `bytecode.c` ‡    | bytecode     | none       |   469 |    262K cells   |   5.92            |  9.33           | 1.05×                  |
-| `bytecode_gc.c`   | bytecode     | mark-sweep |   956 |    262K cells   |   5.91            |  8.87           | 1.00× (anchor)         |
+| `bytecode_gc.c`   | bytecode     | mark-sweep |   962 |    262K cells   |   5.91            |  8.87           | 1.00× (anchor)         |
 
 † `lisp_rc.c` was measured in a later pass (2026-07-22) on a warmer machine, so
 its absolute ms sit on a different thermal calibration than the rows above —

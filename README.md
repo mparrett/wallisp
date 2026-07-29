@@ -18,7 +18,7 @@ All of these run in the browser off the same zero-imports wasm — nothing to in
 ```bash
 bash build.sh                            # builds engines -> *.wasm (needs clang+wasm-ld and node)
 node harness/test_bc.mjs                 # bytecode correctness suite (35 cases × 2 engines)
-node harness/parity.mjs                  # 141 programs × 9 engines: pinned values + cross-engine parity
+node harness/parity.mjs                  # 157 programs × 9 engines: pinned values + cross-engine parity
 node harness/lisp-cli.mjs -e "(begin (define fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))) (fib 20))"
 # open web/tiny-lisp-vm.html in a browser — self-contained live REPL + writeup
 ```

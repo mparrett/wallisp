@@ -32,7 +32,9 @@ jobs:
       #
       # The two suites that DO need a toolchain (standalone/test.mjs and
       # tests/reader_sugar.sh) run in the `full-suites` job below.
-      - name: Cross-engine parity (141 programs x 9 engines)
+      # No program count in the label: the suite prints its own totals, and a
+      # duplicated number here has already gone stale twice (136 -> 141 -> 157).
+      - name: Cross-engine parity (pinned values + all engines)
         run: node harness/parity.mjs
 
       - name: String parity (bytecode_gc)
