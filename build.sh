@@ -52,7 +52,13 @@ echo "  -> bc_base.wasm bc_inline.wasm bc_super.wasm"
 # on heavy benchmarks (fib(24) wants ~1.8M cells), so bench needs roomy builds.
 echo "bench variants (16M-cell arenas):"
 BIGMEM="-Wl,--initial-memory=268435456"   # 256 MB (CEK allocates most; large arenas keep all 3 engines comparable)
-mkbig () { sed 's/define MAX_CELLS.*/define MAX_CELLS 16000000/' "$1" > /tmp/_big.c; clang $FLAGS $BIGMEM $3 -O2 -Iengines -o "$2" /tmp/_big.c; }
+# NOTE: *_big.wasm are compiled from a MUTATED copy of the engine source (MAX_CELLS
+# rewritten), not from engines/*.c as-is. Anyone comparing bench numbers back to the
+# engine sources should know the arena constant differs. Per-invocation temp dir so
+# two concurrent builds can't clobber each other's intermediate.
+BIGTMP="$(mktemp -d)"
+trap 'rm -rf "$BIGTMP"' EXIT
+mkbig () { sed 's/define MAX_CELLS.*/define MAX_CELLS 16000000/' "$1" > "$BIGTMP/big.c"; clang $FLAGS $BIGMEM $3 -O2 -Iengines -o "$2" "$BIGTMP/big.c"; }
 mkbig engines/lisp.c            lisp_big.wasm
 mkbig engines/lisp_trampoline.c lisp_trampoline_big.wasm  # for direct A/B vs lisp_big at matching arena
 mkbig engines/lisp_region.c     lisp_region_big.wasm
@@ -87,8 +93,8 @@ if [ "$WANT_NATIVE" = "1" ]; then
   # heavy benchmarks). CLI uses the default-arena engine for fast load + small
   # one-off evals — same as the wasm CLI's bytecode_gc.wasm default.
   mknat () { # engine_name engine_src
-    sed 's/define MAX_CELLS.*/define MAX_CELLS 16000000/' engines/$2.c > /tmp/_${1}_big.c
-    clang $NFLAGS -DENGINE_NAME='"'$1'"' -DENGINE_SRC='"/tmp/_'$1'_big.c"' \
+    sed 's/define MAX_CELLS.*/define MAX_CELLS 16000000/' engines/$2.c > "$BIGTMP/${1}_big.c"
+    clang $NFLAGS -DENGINE_NAME='"'$1'"' -DENGINE_SRC='"'"$BIGTMP/${1}_big.c"'"' \
           -o native_bench_$1 native/bench.c
     clang $NFLAGS -DENGINE_SRC='"engines/'$2'.c"' \
           -o native_cli_$1 native/main.c
