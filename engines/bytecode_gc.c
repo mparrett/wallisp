@@ -712,15 +712,21 @@ static u32 run(u32 entry){
               default:     r=(fixval(a)<fixval(b))?TRUE:NIL; break; // PR_LT
             }
             R_vsp-=3; vstack[R_vsp++]=r;
-          } else if(n==1 && (id==PR_CAR||id==PR_CDR||(id>=PR_NULLP&&id<=PR_LISTQ))){
-            // inline 1-arg car/cdr/null?/pair?/list?: skip arg-list cons + apply_prim
+          } else if(n==1 && (id==PR_CAR||id==PR_CDR||(id>=PR_NULLP&&id<=PR_SYMBOLP))){
+            // inline 1-arg car/cdr/null?/pair?/list?/number?/symbol?:
+            // skip arg-list cons + apply_prim. H13: this range must stay in
+            // step with OP_CALL's above — and the guard must not be widened
+            // without adding the matching case, or the new id lands in
+            // `default:` and silently answers as a different predicate.
             u32 a=vstack[R_vsp-1];
             switch(id){
-              case PR_CAR:   if(!is_cons(a)) return ERR; r=cells[considx(a)].car; break;
-              case PR_CDR:   if(!is_cons(a)) return ERR; r=cells[considx(a)].cdr; break;
-              case PR_NULLP: r=is_nil(a)?TRUE:NIL; break;
-              case PR_PAIRP: r=is_cons(a)?TRUE:NIL; break;
-              default:       r=(is_nil(a)||is_cons(a))?TRUE:NIL; break; // PR_LISTQ
+              case PR_CAR:     if(!is_cons(a)) return ERR; r=cells[considx(a)].car; break;
+              case PR_CDR:     if(!is_cons(a)) return ERR; r=cells[considx(a)].cdr; break;
+              case PR_NULLP:   r=is_nil(a)?TRUE:NIL; break;
+              case PR_PAIRP:   r=is_cons(a)?TRUE:NIL; break;
+              case PR_LISTQ:   r=(is_nil(a)||is_cons(a))?TRUE:NIL; break;
+              case PR_NUMBERP: r=is_fix(a)?TRUE:NIL; break;
+              default:         r=is_sym(a)?TRUE:NIL; break; // PR_SYMBOLP
             }
             R_vsp-=2; vstack[R_vsp++]=r;
           } else {

@@ -253,6 +253,32 @@ const PROGRAMS = [
   // composes with other predicates — used by the upcoming metacircular eval
   ["(if (number? 5) 'num 'sym)", "num"],
   ["(if (symbol? 'x) 'sym 'num)", "sym"],
+
+  // ── 1-arg predicates in TAIL position (H13) ──────────────────────────────
+  // A predicate as a lambda's last expression compiles to OP_TAILCALL, not
+  // OP_CALL — a separate inline fast path in bytecode_gc.c with its own arm
+  // for each primitive. Everything above tests only the OP_CALL side, which
+  // is how the two paths' primitive coverage drifted apart unnoticed. These
+  // pin the tail-position answers so a mis-widened guard (admitting a
+  // primitive past the guard without adding its switch case, hence falling
+  // into a neighbour's `default:`) fails loudly instead of silently
+  // returning another predicate's verdict.
+  ['(begin (define (p x) (number? x)) (p 5))', "t"],
+  ['(begin (define (p x) (number? x)) (p (quote a)))', "()"],
+  ['(begin (define (p x) (number? x)) (p (quote (1 2))))', "()"],
+  ['(begin (define (p x) (symbol? x)) (p (quote a)))', "t"],
+  ['(begin (define (p x) (symbol? x)) (p 5))', "()"],
+  ['(begin (define (p x) (symbol? x)) (p (quote (1 2))))', "()"],
+  ['(begin (define (p x) (list? x)) (p (quote (1 2))))', "t"],
+  ['(begin (define (p x) (list? x)) (p nil))', "t"],
+  ['(begin (define (p x) (list? x)) (p 5))', "()"],
+  ['(begin (define (p x) (null? x)) (p nil))', "t"],
+  ['(begin (define (p x) (null? x)) (p 5))', "()"],
+  ['(begin (define (p x) (pair? x)) (p (quote (1 2))))', "t"],
+  ['(begin (define (p x) (pair? x)) (p 5))', "()"],
+  ['(begin (define (p x) (car x)) (p (quote (7 8))))', "7"],
+  ['(begin (define (p x) (cdr x)) (p (quote (7 8))))', "(8)"],
+  ['(begin (define (p x) (car x)) (p 5))', "<error>"],
 ];
 
 async function load(file) {

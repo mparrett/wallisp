@@ -2914,3 +2914,95 @@ churn — none of these benchmarks occupy.
 Engine and harness wiring shipped (the `lisp_rc.wasm` module is checked in and
 in `parity.mjs`/`bench.mjs`). Unlike H11, this one *stays* — a fourth,
 genuinely different collector on the axis, kept for its negative result.
+
+## H13 — `OP_TAILCALL`'s inline range had drifted from `OP_CALL`'s (FALSIFIED on magnitude; a second effect isolated)
+
+Found by an architecture survey rather than a failing test. `bytecode_gc.c`
+inlines 1-arg primitives at two sites, and the guards disagreed:
+
+```c
+OP_CALL     (658):  id>=PR_NULLP && id<=PR_SYMBOLP     // null? pair? list? number? symbol?
+OP_TAILCALL (715):  id>=PR_NULLP && id<=PR_LISTQ       // null? pair? list?
+```
+
+So `number?` and `symbol?` were inlined in operand position but fell through to
+`cons` + `apply_prim` in **tail** position. Same answers, more work.
+`number?`/`symbol?` shipped 2026-06-03 and only `OP_CALL`'s guard was widened;
+H11's pre-registration then recorded "*`OP_TAILCALL` has parallel fast-path
+blocks; they get the same treatment*" — the asymmetry was assumed away three
+days after it appeared.
+
+**Why nothing caught it.** The paths are semantically identical, so parity is
+structurally blind. And nothing in the repo called these primitives in tail
+position: the five canonical benchmarks never call them at all, and
+`metacircular.lisp` dispatches on `pair?`/`null?`/`=`, leaning on unbound atoms
+self-evaluating. `parity.mjs` covered them only in operand position. Sixteen
+tail-position cases were added there first; they pass against the unpatched
+engine and **fail** against a naive one-character widening (see below), which is
+what makes them worth keeping.
+
+**The fix is not one character.** `OP_TAILCALL`'s switch used `default:` for
+`PR_LISTQ`. Widening the guard alone admits `PR_NUMBERP`/`PR_SYMBOLP` into that
+default and answers both as `list?`: `(number? 5)` returns `()` and
+`(number? '(1 2))` returns `t`, silently. Verified by building it. The guard and
+the switch have to move together.
+
+### Measured — and the first attempt was uninterpretable
+
+Naive base-vs-patched showed the *controls* moving as much as the affected path
+(`tailsum` 0.868×, `null?` 0.944× in one run). A self-control — the identical
+file compared against a byte-identical copy through the same harness — returned
+1.000–1.003×, so the harness was sound and something real was moving unrelated
+benchmarks.
+
+Separating it needed a **sham build**: the new switch cases added but the guard
+left narrow, so the arms are unreachable and behaviour is identical to base
+(parity 157/157 confirms). That splits code-shape perturbation from the actual
+inlining. Interleaved separate processes, alternating order, best-of-25, 11
+reps, ratio of medians:
+
+| comparison | what it isolates | `number?` (tail) | fib(24) |
+|---|---|---|---|
+| base → sham    | code shape only | 1.006× (1.00–1.01) | **1.024×** (1.02–1.03) |
+| sham → patched | guard widening only | **1.060×** (1.05–1.07) | 1.000× (1.00–1.00) |
+
+Two independent effects were superimposed, which is why the first pass looked
+like noise:
+
+1. **Adding two unreachable `case` arms made fib 2.4% faster.** No semantic
+   change whatsoever — pure V8 compilation shift in the `br_table` arm. The
+   H2/H6 pattern again: the JIT is the arbiter, and wasm that never executes
+   still moves the number. `sham → patched` on fib is 1.000× with a 1.00–1.00
+   spread, so this is attributable to code shape alone, not the guard.
+2. **Widening the guard is worth 1.060× on the affected path** and exactly
+   nothing elsewhere.
+
+### Verdict against the pre-registration
+
+- **(a) "no change on the five canonical benchmarks" — FALSIFIED**, but for a
+  reason the prediction didn't contemplate. fib moved +2.4%, outside the ±2%
+  window. The cause is the added switch cases perturbing V8, not the semantic
+  change; the semantic change alone is 1.000× on fib.
+- **(b) meta-fib unchanged — held** (1.008×, and it doesn't call these prims).
+- **(c) "1.10–1.30× on a tail-position microbenchmark" — FALSIFIED on
+  magnitude.** Measured 1.060×, above the 1.05× "narrow `OP_CALL` instead"
+  threshold but only just, and below the predicted band. `number?` and
+  `symbol?` agree (1.064× / 1.069× in an earlier 15-rep pass), which is the
+  consistency check that the effect is real.
+- **(d) wasm size ≤0.5% — CONFIRMED.** 28602 → 28633 bytes, +0.11%.
+
+### What it's worth
+
+Almost nothing in isolation: no benchmark, example, or test in the repo runs
+`number?`/`symbol?` in tail position, so the 6% was unreachable in practice. The
+durable results are the 16 parity cases (which now guard both fast paths and
+demonstrably catch the wrong fix) and finding (1) — one more instance of the
+project's most-repeated lesson, on the cleanest evidence yet, since the sham
+build changes literally nothing that executes.
+
+The maintenance lesson: two verbatim-duplicated ~35-line blocks drifted apart,
+and the project's own falsification discipline propagated the wrong assumption
+in H11 rather than catching it. A shared `static inline` helper would prevent
+recurrence, but it perturbs the hot loop — finding (1) is direct evidence that
+even inert edits there move the numbers — so it needs its own A/B and is not
+folded in here.
