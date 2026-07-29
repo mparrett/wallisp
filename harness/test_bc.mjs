@@ -1,17 +1,4 @@
-import fs from 'fs';
-
-async function loadEngine(wasmName) {
-  const bytes = fs.readFileSync(new URL(`../${wasmName}`, import.meta.url));
-  const { instance } = await WebAssembly.instantiate(bytes, {});
-  const ex = instance.exports;
-  const mem = ex.memory;
-  return (src) => {
-    const enc = new TextEncoder().encode(src);
-    new Uint8Array(mem.buffer, ex.input_ptr(), enc.length).set(enc);
-    const outLen = ex.eval_source(enc.length);
-    return new TextDecoder().decode(new Uint8Array(mem.buffer, ex.output_ptr(), outLen));
-  };
-}
+import { loadEngine } from './engine.mjs';
 
 const tests = [
   ["(+ 1 2)", "3"],
@@ -68,7 +55,7 @@ async function main() {
   let total = 0, totalFail = 0;
   for (const wasmName of ['bytecode.wasm', 'bytecode_gc.wasm']) {
     console.log(`\n=== ${wasmName} ===`);
-    const run = await loadEngine(wasmName);
+    const { run } = await loadEngine(wasmName);
     let pass = 0, fail = 0;
     for (const [src, want] of tests) {
       const got = run(src);

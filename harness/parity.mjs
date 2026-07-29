@@ -42,7 +42,7 @@
 // allocates ~10× more than that and lives in harness/bench.mjs, which uses
 // the big-arena variants and cross-checks engine output the same way.
 
-import fs from 'fs';
+import { loadEngine } from './engine.mjs';
 
 const ENGINES = [
   'lisp.wasm',
@@ -281,16 +281,8 @@ const PROGRAMS = [
   ['(begin (define (p x) (car x)) (p 5))', "<error>"],
 ];
 
-async function load(file) {
-  const { instance } = await WebAssembly.instantiate(fs.readFileSync(new URL('../' + file, import.meta.url)), {});
-  const ex = instance.exports, mem = ex.memory;
-  return (src) => {
-    const e = new TextEncoder().encode(src);
-    new Uint8Array(mem.buffer, ex.input_ptr(), e.length).set(e);
-    const n = ex.eval_source(e.length);
-    return new TextDecoder().decode(new Uint8Array(mem.buffer, ex.output_ptr(), n));
-  };
-}
+// Shared ABI handshake — see harness/engine.mjs.
+const load = async (file) => (await loadEngine(file)).run;
 
 const main = async () => {
   const engines = [];
