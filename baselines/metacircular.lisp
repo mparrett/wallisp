@@ -80,7 +80,8 @@
               (if (< n 2)
                   n
                   (+ (fib (- n 1)) (fib (- n 2)))))))
-       8))
+       8))   ; META_N — harness/bench.mjs rewrites this literal to scale the
+             ; workload. Keep the marker, and keep it the only one in the file.
     (lambda (f)
       ((lambda (x) (f (lambda (v) ((x x) v))))
        (lambda (x) (f (lambda (v) ((x x) v)))))))
