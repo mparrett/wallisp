@@ -1,6 +1,7 @@
-// bytecode.c — the same tiny Lisp, but COMPILED to bytecode and run on a stack
-// machine, for an apples-to-apples speed A/B against the tree-walker (lisp.c)
-// and the CEK machine (cek.c). Same reader, printer, arena, primitives.
+// bc_orig.c — prototype bytecode VM in its simplest form: no TCO, no GC.
+// The base of the optimization ladder in prototype/ (see prototype/README.md),
+// and the starting point engines/bytecode.c was grown from. Same reader,
+// printer, arena, and primitives as the study engines.
 //
 // The idea: walk each expression's cons-tree ONCE at compile time into a flat
 // u32 instruction array, resolving variables to lexical (depth,index) addresses
