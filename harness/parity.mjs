@@ -27,13 +27,14 @@
 // engines are the only specification there is. Two pins are worth knowing
 // before you "fix" them:
 //
-//   * `(car nil)` is `<error>`, not `()`. Deliberate: an explicit `!is_cons`
-//     guard in each engine's PR_CAR.
+//   * `(car nil)` is `<error>`, not `()` — Scheme's rule, not Common Lisp's.
+//     Deliberate: an explicit `!is_cons` guard in each engine's PR_CAR.
+//     See docs/notes/decisions.md, ADR-006.
 //   * `(mod -7 3)` is `-1` and `(/ -7 2)` is `-3`. These are bare C `%` and `/`
-//     with only a zero-divisor guard, i.e. R7RS `remainder`/`truncate` rather
-//     than `modulo`/`floor`, despite the name `mod`. Inherited from C, not
-//     argued for anywhere in the sources — pinned so that changing it has to be
-//     a deliberate edit here rather than a silent drift.
+//     with only a zero-divisor guard, i.e. R7RS `remainder`/`quotient` rather
+//     than `modulo`/`floor`, despite the name `mod`. Inherited from C rather
+//     than argued for; ratified and pinned on BOTH signs so the rule can't
+//     drift half-way. See ADR-007, which also records what a rename would cost.
 //
 //   node harness/parity.mjs
 //
@@ -199,6 +200,15 @@ const PROGRAMS = [
   ['(/ 5)', "<error>"],
   ['(mod 7 3)', "1"],
   ['(mod -7 3)', "-1"],
+  // Sign rule for negative operands (ADR-007). `/` and `mod` are C's `/` and
+  // `%`: division truncates toward zero and the remainder takes the DIVIDEND's
+  // sign — i.e. R7RS quotient/remainder, not floor/modulo, despite the name
+  // `mod`. Scheme's (modulo -7 3) would be 2, not -1. Pinned on both signs so
+  // the rule can't drift half-way.
+  ['(mod 7 -3)', "1"],
+  ['(mod -7 -3)', "-1"],
+  ['(/ 7 -2)', "-3"],
+  ['(/ -7 -2)', "3"],
   ['(mod 1 0)', "<error>"],
   ['(mod 5)', "<error>"],
   // 30-bit overflow trap on arithmetic

@@ -24,6 +24,11 @@ For build/run, see [README.md](README.md). For the empirical record, see
   floor (validation, `set!`, and pair mutation) to all eight engines, so it's
   real, not "tinylisp/mal minimal-validation". (`number?` / `symbol?` shipped
   2026-06-03 to unblock the metacircular eval.)
+  Two semantics worth knowing before porting Scheme code, both pinned in
+  `parity.mjs`: `car`/`cdr` of a non-pair is an **error**, not `()` (ADR-006),
+  and `/` and `mod` are C's `/` and `%` — truncating toward zero with a
+  dividend-signed remainder, so `(mod -7 3)` is `-1` where Scheme's `modulo`
+  gives `2`. `mod` is `remainder` wearing the wrong name (ADR-007).
 - **`bytecode_gc` extension:** strings (`string?` `string-length` `string-ref`
   `string=?` `string-append`) are the one capability the other engines leave
   unbound; `harness/parity.mjs` gates the string programs to `bytecode_gc`.

@@ -244,3 +244,98 @@ outbuf (reset each call). **Verified at 1,000,000 ticks**: no `<error>`,
 - This closes the engine work for a real-time terminal game. Remaining is host
   only (the xterm.js flavour) and the deferred strheap mark-compactor (ADR-004)
   for persistent-string churn, which a transient-frame game doesn't hit.
+
+## ADR-006: `car`/`cdr` of a non-pair is an error, not `()` (2026-07-30)
+
+**Status**: Ratifying existing behaviour. Shipped since the first engine;
+written down now because nothing recorded it.
+
+**Context**: `(car nil)` returns `<error>` on all nine engines, as does `(car 5)`
+and `(cdr nil)`. This is a real fork in Lisp design and the two families
+disagree: Common Lisp defines `(car nil)` => `NIL` and leans on it constantly
+for list-walking idioms; Scheme makes `car` of a non-pair an error (R7RS: "it is
+an error if pair is not a pair"). wallisp follows Scheme.
+
+Unlike ADR-007, this one *is* deliberate in the code: every engine's `PR_CAR`
+carries an explicit `if(!is_cons(a)) return ERR;` guard, and the parity suite has
+grouped `(car 5)`, `(car nil)`, `(cdr 5)` as "edge cases on car/cdr" since PR1.
+The guard was written on purpose; only the rationale went unrecorded.
+
+**Decision**: Keep it. `car`/`cdr` require a pair.
+
+**Alternatives**:
+- **Common Lisp's nil-punning** (`(car nil)` => `()`): would make list code
+  shorter, and the internal C helpers `car()`/`cdr()` already behave this way
+  (they return `NIL` for non-pairs — that's what lets the evaluator walk
+  malformed forms without crashing). Rejected: the *primitive* should be strict
+  even though the internal helper is lenient, because a silent `()` from a typo
+  is exactly the class of bug the PR1 validation work existed to eliminate.
+- **A distinct error value per failure kind** — orthogonal and still open;
+  every failure currently collapses to one opaque `<error>` token.
+
+**Consequences**:
+- Pinned in `harness/parity.mjs` (`(car nil)`, `(car 5)`, `(cdr 5)`), so a
+  regression fails CI rather than silently changing the language.
+- Programs must guard with `null?`/`pair?` before destructuring. The metacircular
+  evaluator and `standalone/prelude.lisp` already do.
+- Note the asymmetry for anyone reading the C: the internal `car()`/`cdr()`
+  helpers stay nil-tolerant. That leniency is why malformed special forms like
+  `(if)` evaluate to `()` instead of erroring — a separate known gap, not this
+  decision.
+
+## ADR-007: `/` and `mod` are C's `/` and `%` — truncating, remainder-signed (2026-07-30)
+
+**Status**: Ratifying inherited behaviour. Recorded because a review found the
+project describing this as a deliberate choice when nothing in the sources
+supports that.
+
+**Context**: `/` and `mod` are implemented as bare C operators with only a
+zero-divisor guard:
+
+```c
+case PR_DIV: ... i32 r = fixval(a)/bv; if(!fits_fix(r)) return ERR; return mkfix(r);
+case PR_MOD: ... return mkfix(fixval(a)%bv);
+```
+
+No comment, no ADR, no FINDINGS entry — the semantics are whatever C gives.
+Measured across all nine engines:
+
+| expression | wallisp | R7RS `modulo`/`floor` would give |
+|---|---|---|
+| `(mod -7 3)`  | `-1` | `2`  |
+| `(mod 7 -3)`  | `1`  | `-2` |
+| `(mod -7 -3)` | `-1` | `-1` |
+| `(/ -7 2)`    | `-3` | `-4` |
+| `(/ 7 -2)`    | `-3` | `-4` |
+
+So division truncates toward zero and the remainder takes the **dividend's**
+sign. That is R7RS `quotient` and `remainder` — while the primitive is named
+`mod`, which in every Scheme means `modulo` (divisor-signed, floor-based). The
+name is misleading.
+
+**Decision**: Keep the semantics, pin them, and document the mismatch rather
+than rename or reimplement.
+
+**Alternatives**:
+- **Rename `mod` to `remainder`**: most honest, and cheap in isolation. Rejected
+  for now because the name is load-bearing in `examples/`, `standalone/prelude.lisp`
+  usage, both published writeups, and every engine's `bindp` table — a rename is
+  a nine-engine change plus a doc sweep, for a project whose value is the
+  measurements, not the surface syntax.
+- **Implement true `modulo`** (adjust sign when operands differ): correct
+  Scheme, but adds a branch to a primitive on the hot path, changes results for
+  existing programs, and would need re-measuring against PR1's validation-tax
+  numbers. Not worth it to fix a name.
+- **Provide both** (`mod` + `remainder`): grows the primitive table across nine
+  engines to resolve an ambiguity nothing in the repo actually hits.
+
+**Consequences**:
+- Both signs are pinned in `harness/parity.mjs` (`(mod 7 -3)`, `(mod -7 -3)`,
+  `(/ 7 -2)`, `(/ -7 -2)` added with this ADR), so the rule can no longer drift
+  half-way — previously only the positive-divisor cases were covered.
+- `harness/parity.mjs`'s header names this among the pins that encode a
+  language choice, so it isn't "fixed" by someone assuming it's a bug.
+- Anyone porting Scheme code that relies on `modulo` with mixed signs will get
+  different answers. That is the cost of keeping the name.
+- If the rename ever happens, it is one commit touching nine `bindp` tables,
+  `examples/`, and the two writeups — and this ADR is the place to record it.
