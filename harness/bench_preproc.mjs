@@ -11,6 +11,7 @@ import fs from 'fs';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { loadEngine } from './engine.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const DEMO_MARKED   = path.join(ROOT, 'prototype/futamura/comptime_demo.lisp');
@@ -38,21 +39,8 @@ console.log(unmarked.trim());
 console.log('\n--- preprocessed source ---');
 console.log(folded.trim());
 
-async function load(file) {
-  const bytes = fs.readFileSync(path.join(ROOT, file));
-  const { instance } = await WebAssembly.instantiate(bytes, {});
-  const e = instance.exports;
-  const mem = new Uint8Array(e.memory.buffer);
-  const enc = new TextEncoder(), dec = new TextDecoder();
-  return {
-    run(src) {
-      const b = enc.encode(src);
-      mem.set(b, e.input_ptr());
-      const n = e.eval_source(b.length);
-      return dec.decode(mem.subarray(e.output_ptr(), e.output_ptr() + n));
-    }
-  };
-}
+// Shared ABI handshake — see harness/engine.mjs.
+const load = loadEngine;
 
 function bestOf(fn, reps = 25) {
   let lo = Infinity, res;
