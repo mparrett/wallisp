@@ -315,11 +315,11 @@ footer a { color: var(--ink-soft); border-bottom-color: var(--border); }
   <p class="lede">What you actually learn when you build the same language eight ways, pre-register predictions, and let the numbers refute you.</p>
 </header>
 
-<p><strong>wallisp</strong> is a tiny Lisp implemented eight ways in freestanding C, compiled to WebAssembly with zero imports, and driven by measurement to a finalist: a bytecode VM with tail-call optimization and a hand-rolled mark-sweep GC. Along the way, four pre-registered hypotheses were tested and most of them got refuted &mdash; including some that looked obviously correct on paper.</p>
+<p><strong>wallisp</strong> is a tiny Lisp implemented eight ways in freestanding C, compiled to WebAssembly with zero imports, and driven by measurement to a finalist: a bytecode VM with tail-call optimization and a hand-rolled mark-sweep GC. Along the way nineteen pre-registered experiments were run and six were falsified outright &mdash; including several that looked obviously correct on paper.</p>
 
 <p>The project isn't a Lisp tutorial. It's a study in how interpreter design choices interact with their compilation substrate, told through eight implementations of the same evaluator. A tiny Lisp is the smallest complete lab for programming-language implementation; this one treats the lab like science instead of nostalgia.</p>
 
-<p>All eight engines export the same wasm ABI and agree byte-for-byte on a 136-program parity suite (<code>harness/parity.mjs</code>) &mdash; that's what keeps the A/B comparisons honest. Each engine validates primitive arity, types, division-by-zero, and arithmetic overflow (<code>(+ 1)</code>, <code>(+ 'a 1)</code>, and <code>(/ 1 0)</code> all return <code>&lt;error&gt;</code>); user-lambda arity is checked too. <code>bytecode_gc</code> carries extensions the others don't (strings, mutation); the parity harness gates those programs accordingly. Each engine still fits in ~370&ndash;850 lines &mdash; small enough for the A/B comparisons to stay apples-to-apples &mdash; but the language is no longer "minimal-validation tinylisp/mal style".</p>
+<p>All eight engines export the same wasm ABI and agree byte-for-byte on a 157-program parity suite (<code>harness/parity.mjs</code>) &mdash; that's what keeps the A/B comparisons honest. Agreement alone isn't enough, though: 48 of those programs expect <code>&lt;error&gt;</code>, and a regression that broke every engine the same way would agree perfectly. So each program also carries a pinned expected value, asserted independently of the consensus. Each engine validates primitive arity, types, division-by-zero, and arithmetic overflow (<code>(+ 1)</code>, <code>(+ 'a 1)</code>, and <code>(/ 1 0)</code> all return <code>&lt;error&gt;</code>); user-lambda arity is checked too, and mutation (<code>set!</code>, <code>set-car!</code>, <code>set-cdr!</code>) works everywhere. Strings are the one capability <code>bytecode_gc</code> has that the others leave unbound; the parity harness gates those programs accordingly. Engines run ~450&ndash;660 lines, with the finalist at ~960 as the experiment host &mdash; small enough for the A/B comparisons to stay apples-to-apples &mdash; but the language is no longer "minimal-validation tinylisp/mal style".</p>
 
 <details>
 <summary><h2><span class="section-num">1</span>What was built</h2></summary>
@@ -360,6 +360,8 @@ footer a { color: var(--ink-soft); border-bottom-color: var(--border); }
 <p>The two empty cells are honest. Region-drop requires the live state to be a downward-only chain anchored at a stable bottom (the global env). Neither CEK (heap continuations are the live state, they churn mid-eval) nor bytecode (operand stack + call frames churn mid-eval) naturally satisfies that invariant. <strong>Region-drop is a tree-walker-shaped collector, not a universal one.</strong></p>
 
 <p>The tree-walker has a fourth variant too &mdash; <code>lisp_trampoline.c</code>, an explicit <code>while(TRUE)</code> form of the recursive eval &mdash; built to verify a measurement claim, not to test a new design point. We'll come back to it.</p>
+
+<p>Beyond the canonical eight sits one appendix experiment, added later: <code>lisp_rc.c</code>, a tree-walker with a fourth collector on the GC axis &mdash; <strong>reference counting</strong> (H12). It isn't a peer engine, just the axis probe, and it's kept for its negative result: refcount is the <em>slowest</em> strategy here, ~1.1&ndash;1.25&times; worse than mark-sweep, because mark-sweep is lazy and barely fires while the arena fits, whereas refcounting pays inc/dec eagerly on every reference. The headline framing stays "eight."</p>
 
 </details>
 
@@ -437,7 +439,7 @@ footer a { color: var(--ink-soft); border-bottom-color: var(--border); }
       <line x1="752" y1="288" x2="752" y2="292"/>
     </g>
   </svg>
-  <figcaption>fib(24), Node/V8 best-of-25. Bytecode is in a different league from the tree-walker variants, which are in turn faster than CEK. Full 5-benchmark numbers preserve this ordering &mdash; see <code>FINDINGS.md</code> in the repo root.</figcaption>
+  <figcaption>fib(24), Node/V8 best-of-25, all eight from a single measurement pass. Bytecode is in a different league from the tree-walker variants, which are in turn faster than CEK. Read the <em>ratios</em>, not the absolutes: these are V8-on-wasm on one machine, and later passes sit on a different thermal calibration &mdash; <code>ENGINES.md</code> carries the current same-run table, and full 5-benchmark numbers preserve this ordering. Both in the repo root.</figcaption>
 </figure>
 
 <p>Why bytecode wins is the same on every benchmark: it attacks the axis V8's JIT doesn't already cover. Special-form recognition is compiled once into opcodes (no <code>if(op==s_quote)...if(op==s_if)...</code> cascade per call). Variables are addressed by lexical <code>(depth, index)</code> instead of walked via cons-cell association lists. The operand stack carries values between operations instead of cons'd argument lists allocating on every call. None of these are exotic tricks; they're the standard reasons a stack VM beats a tree-walker.</p>
@@ -889,9 +891,9 @@ static void gc(void) {
 </details>
 
 <details>
-<summary><h2>Closing &mdash; eight engines, four hypotheses, three falsifications</h2></summary>
+<summary><h2>Closing &mdash; eight engines, nineteen experiments, six falsifications</h2></summary>
 
-<p>The full project ran four pre-registered hypothesis arcs:</p>
+<p>The project opened with four pre-registered hypothesis arcs, which set the pattern for everything after:</p>
 
 <ul>
   <li><strong>H1:</strong> CEK is needed for unbounded tail recursion. <em>Refuted.</em> clang TRE made the tree-walker unbounded for free. Later verified with <code>lisp_trampoline.c</code> (1.005&times; wasm vs <code>lisp.c</code>, 2 bytes apart in module size).</li>
@@ -900,7 +902,9 @@ static void gc(void) {
   <li><strong>H4:</strong> GC widens bytecode's speed lead. <em>Partially confirmed; mechanism refuted.</em> The widening is real (4 of 5 wasm benchmarks) but driven by H2's per-callsite barrier amplified by engine shape, not by collection frequency. Three GC engines together show V8's amplification scales with each engine's JIT-specializability: <code>bytecode_gc</code> ~1.0&times;, <code>lisp_gc</code> ~1.1&times;, <code>cek_gc</code> ~1.4&times;.</li>
 </ul>
 
-<p>A handful of deferred ideas sit in <code>docs/notes/</code>. The full record (predictions, measurements, falsification logs, reframings) lives in <code>FINDINGS.md</code> &mdash; ten hypothesis arcs tracked there as of writing, including H6 (string-heap GC tax, falsified), H7 (CEK + <code>call/cc</code> as a speed story, falsified), H8 (bytecode's lead on metacircular, formally pre-registered against the &sect;9 finding above and re-confirmed at 3.94&times; faster), and a partial-evaluation thread (H9 + H10) written up separately in <a href="futamura.html">futamura.html</a> &mdash; two ways to remove the eval loop, both predicted at 3&ndash;5&times; and both measured at 50&ndash;65&times;. Architecture and ISA in <code>DEV.md</code>. Engine comparison matrix in <code>ENGINES.md</code>. Clean extraction of the finalist VM in <code>standalone/</code>. All in the repo root.</p>
+<p>Everything above was written at the H8 mark; the arcs kept coming. Also in the record: <strong>H6</strong> (string-heap GC tax, falsified), <strong>H7</strong> (CEK + <code>call/cc</code> as a speed story, falsified), <strong>H8</strong> (bytecode's lead on metacircular, pre-registered against the &sect;9 finding above), a partial-evaluation thread (<strong>H9</strong> + <strong>H10</strong>) written up separately in <a href="futamura.html">futamura.html</a> &mdash; two ways to remove the eval loop, both predicted at 3&ndash;5&times; and both measured at 50&ndash;65&times; &mdash; <strong>H11</strong> (branchless predicate primitives: falsified in the <em>wrong direction</em>, a small pessimization, and reverted), <strong>H12</strong> (refcounting as a fourth collector: falsified on mechanism &mdash; the penalty tracks call volume, not allocation), and <strong>H13</strong> (an inline fast path that had silently drifted between two call sites; the fix was worth 1.06&times; on a path nothing in the repo reaches, while <em>adding two unreachable switch arms</em> made fib 2.4% faster all by itself &mdash; the cleanest evidence yet that V8, not the wasm, is the arbiter).</p>
+
+<p>Nineteen pre-registered experiments in total, six falsified outright and several more refuted on mechanism while surviving on direction. The full record &mdash; predictions, measurements, falsification logs, reframings &mdash; lives in <code>FINDINGS.md</code>, which opens with an index of every one and how it landed. A handful of deferred ideas sit in <code>docs/notes/</code>. Architecture and ISA in <code>DEV.md</code>. Engine comparison matrix in <code>ENGINES.md</code>. Clean extraction of the finalist VM in <code>standalone/</code>. All in the repo root.</p>
 </details>
 
 </div>
