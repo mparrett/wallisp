@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
+import { loadEngine } from './engine.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wallisp-futamura-'));
@@ -30,18 +31,9 @@ function assert(cond, msg) {
   }
 }
 
-function runWasm(file, input = '') {
-  const bytes = fs.readFileSync(file);
-  const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), {});
-  const e = instance.exports;
-  const mem = new Uint8Array(e.memory.buffer);
-  const enc = new TextEncoder();
-  const dec = new TextDecoder();
-  const src = enc.encode(input);
-  mem.set(src, e.input_ptr());
-  const n = e.eval_source(src.length);
-  return dec.decode(mem.subarray(e.output_ptr(), e.output_ptr() + n));
-}
+// Shared ABI handshake — see harness/engine.mjs. Residual modules export the
+// same four symbols as the engines, so they load identically.
+const runWasm = async (file, input = '') => (await loadEngine(file)).run(input);
 
 build(preproc, path.join(ROOT, 'prototype/futamura/preproc.c'));
 build(specialize, path.join(ROOT, 'prototype/futamura/specialize.c'));
@@ -152,5 +144,5 @@ build(specialize, path.join(ROOT, 'prototype/futamura/specialize.c'));
     const after = fs.readFileSync(path.join(ROOT, f));
     assert(Buffer.compare(before.get(f), after) === 0, `${f} stays byte-identical after rebuild`);
   }
-  assert(runWasm(path.join(ROOT, 'residual_nrev_demo_gen.wasm')) === '1275', 'nrev residual wasm produces 1275');
+  assert(await runWasm(path.join(ROOT, 'residual_nrev_demo_gen.wasm')) === '1275', 'nrev residual wasm produces 1275');
 }

@@ -18,6 +18,7 @@ import fs from 'fs';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { loadEngine } from './engine.mjs';
 
 // Self-bootstrap: if any residual is missing, run the futamura build script.
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -96,21 +97,10 @@ const NREV_SRC = `(begin
 const NREV_IN = '';
 const NREV_EXPECTED = '1275';
 
-async function load(file) {
-  const bytes = fs.readFileSync(new URL('../' + file, import.meta.url));
-  const { instance } = await WebAssembly.instantiate(bytes, {});
-  const e = instance.exports;
-  const mem = new Uint8Array(e.memory.buffer);
-  const enc = new TextEncoder(), dec = new TextDecoder();
-  return {
-    run(src) {
-      const bytes = enc.encode(src);
-      mem.set(bytes, e.input_ptr());
-      const n = e.eval_source(bytes.length);
-      return dec.decode(mem.subarray(e.output_ptr(), e.output_ptr() + n));
-    }
-  };
-}
+// Shared ABI handshake — see harness/engine.mjs. The residual_*.wasm modules
+// export exactly the same four symbols as the engines (eval_source, input_ptr,
+// output_ptr, memory) and use the same 8 KB INCAP, so they load identically.
+const load = loadEngine;
 
 function bestOf(fn, reps = 25) {
   let lo = Infinity, res;
